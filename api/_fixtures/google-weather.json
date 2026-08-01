@@ -1,0 +1,160 @@
+{
+  "current": {
+    "currentTime": "2026-08-01T14:00:00.123456789Z",
+    "timeZone": { "id": "America/New_York" },
+    "isDaytime": true,
+    "weatherCondition": {
+      "iconBaseUri": "https://maps.gstatic.com/weather/v1/mostly_sunny",
+      "description": { "text": "Mostly sunny", "languageCode": "en" },
+      "type": "MOSTLY_CLEAR"
+    },
+    "temperature": { "degrees": 82.4, "unit": "FAHRENHEIT" },
+    "feelsLikeTemperature": { "degrees": 84.1, "unit": "FAHRENHEIT" },
+    "relativeHumidity": 58,
+    "uvIndex": 7,
+    "precipitation": {
+      "probability": { "type": "RAIN", "percent": 15 },
+      "qpf": { "quantity": 0, "unit": "INCHES" }
+    },
+    "thunderstormProbability": 5,
+    "wind": {
+      "direction": { "cardinal": "SOUTHWEST", "degrees": 225 },
+      "speed": { "value": 9, "unit": "MILES_PER_HOUR" },
+      "gust": { "value": 16, "unit": "MILES_PER_HOUR" }
+    },
+    "visibility": { "distance": 10, "unit": "MILES" },
+    "cloudCover": 24
+  },
+  "hourly": {
+    "forecastHours": [
+      {
+        "interval": { "startTime": "2026-08-01T14:00:00Z", "endTime": "2026-08-01T15:00:00Z" },
+        "isDaytime": true,
+        "weatherCondition": { "description": { "text": "Hot and mostly sunny" }, "type": "MOSTLY_CLEAR" },
+        "temperature": { "degrees": 91, "unit": "FAHRENHEIT" },
+        "feelsLikeTemperature": { "degrees": 97, "unit": "FAHRENHEIT" },
+        "precipitation": { "probability": { "type": "RAIN", "percent": 10 } },
+        "thunderstormProbability": 5,
+        "relativeHumidity": 62,
+        "wind": { "direction": { "cardinal": "SOUTH", "degrees": 180 }, "speed": { "value": 10, "unit": "MILES_PER_HOUR" }, "gust": { "value": 17, "unit": "MILES_PER_HOUR" } }
+      },
+      {
+        "interval": { "startTime": "2026-08-01T15:00:00Z", "endTime": "2026-08-01T16:00:00Z" },
+        "isDaytime": true,
+        "weatherCondition": { "description": { "text": "Scattered thunderstorms" }, "type": "SCATTERED_THUNDERSTORMS" },
+        "temperature": { "degrees": 88, "unit": "FAHRENHEIT" },
+        "feelsLikeTemperature": { "degrees": 94, "unit": "FAHRENHEIT" },
+        "precipitation": { "probability": { "type": "RAIN", "percent": 70 } },
+        "relativeHumidity": 70,
+        "thunderstormProbability": 65,
+        "wind": { "direction": { "cardinal": "SOUTHWEST", "degrees": 220 }, "speed": { "value": 14, "unit": "MILES_PER_HOUR" }, "gust": { "value": 29, "unit": "MILES_PER_HOUR" } }
+      },
+      {
+        "interval": { "startTime": "2026-08-01T16:00:00Z", "endTime": "2026-08-01T17:00:00Z" },
+        "isDaytime": true,
+        "weatherCondition": { "description": { "text": "Rain showers" }, "type": "RAIN_SHOWERS" },
+        "temperature": { "degrees": 84, "unit": "FAHRENHEIT" },
+        "feelsLikeTemperature": { "degrees": 88, "unit": "FAHRENHEIT" },
+        "precipitation": { "probability": { "type": "RAIN", "percent": 60 } },
+        "thunderstormProbability": 20,
+        "relativeHumidity": 75,
+        "wind": { "direction": { "cardinal": "WEST", "degrees": 270 }, "speed": { "value": 12, "unit": "MILES_PER_HOUR" }, "gust": { "value": 22, "unit": "MILES_PER_HOUR" } }
+      },
+      {
+        "interval": { "startTime": "2026-08-01T17:00:00Z", "endTime": "2026-08-01T18:00:00Z" },
+        "isDaytime": true,
+        "weatherCondition": { "description": { "text": "Partly cloudy" }, "type": "PARTLY_CLOUDY" },
+        "temperature": { "degrees": 80, "unit": "FAHRENHEIT" },
+        "feelsLikeTemperature": { "degrees": 82, "unit": "FAHRENHEIT" },
+        "precipitation": { "probability": { "type": "RAIN", "percent": 15 } },
+        "thunderstormProbability": 5,
+        "relativeHumidity": 61,
+        "wind": { "direction": { "cardinal": "WEST", "degrees": 275 }, "speed": { "value": 8, "unit": "MILES_PER_HOUR" }, "gust": { "value": 12, "unit": "MILES_PER_HOUR" } }
+      },
+      {
+        "interval": { "startTime": "2026-08-01T18:00:00Z", "endTime": "2026-08-01T19:00:00Z" },
+        "isDaytime": true,
+        "weatherCondition": { "description": { "text": "Clear" }, "type": "CLEAR" },
+        "temperature": { "degrees": 77, "unit": "FAHRENHEIT" },
+        "feelsLikeTemperature": { "degrees": 78, "unit": "FAHRENHEIT" },
+        "precipitation": { "probability": { "type": "RAIN", "percent": 5 } },
+        "thunderstormProbability": 0,
+        "relativeHumidity": 55,
+        "wind": { "direction": { "cardinal": "WEST", "degrees": 280 }, "speed": { "value": 6, "unit": "MILES_PER_HOUR" }, "gust": { "value": 9, "unit": "MILES_PER_HOUR" } }
+      },
+      {
+        "interval": { "startTime": "2026-08-01T19:00:00Z", "endTime": "2026-08-01T20:00:00Z" },
+        "isDaytime": true,
+        "weatherCondition": { "description": { "text": "Clear" }, "type": "CLEAR" },
+        "temperature": { "degrees": 75, "unit": "FAHRENHEIT" },
+        "feelsLikeTemperature": { "degrees": 75, "unit": "FAHRENHEIT" },
+        "precipitation": { "probability": { "type": "RAIN", "percent": 5 } },
+        "thunderstormProbability": 0,
+        "relativeHumidity": 53,
+        "wind": { "direction": { "cardinal": "WEST", "degrees": 280 }, "speed": { "value": 5, "unit": "MILES_PER_HOUR" }, "gust": { "value": 8, "unit": "MILES_PER_HOUR" } }
+      }
+    ],
+    "timeZone": { "id": "America/New_York" }
+  },
+  "daily": {
+    "forecastDays": [
+      {
+        "interval": { "startTime": "2026-08-01T11:00:00Z", "endTime": "2026-08-02T11:00:00Z" },
+        "displayDate": { "year": 2026, "month": 8, "day": 1 },
+        "maxTemperature": { "degrees": 91, "unit": "FAHRENHEIT" },
+        "minTemperature": { "degrees": 72, "unit": "FAHRENHEIT" },
+        "daytimeForecast": {
+          "weatherCondition": { "description": { "text": "Scattered thunderstorms" }, "type": "SCATTERED_THUNDERSTORMS" },
+          "precipitation": { "probability": { "type": "RAIN", "percent": 70 } }
+        },
+        "nighttimeForecast": {
+          "weatherCondition": { "description": { "text": "Partly cloudy" }, "type": "PARTLY_CLOUDY" },
+          "precipitation": { "probability": { "type": "RAIN", "percent": 25 } }
+        },
+        "sunEvents": { "sunriseTime": "2026-08-01T10:21:00Z", "sunsetTime": "2026-08-02T00:19:00Z" }
+      },
+      {
+        "interval": { "startTime": "2026-08-02T11:00:00Z", "endTime": "2026-08-03T11:00:00Z" },
+        "displayDate": { "year": 2026, "month": 8, "day": 2 },
+        "maxTemperature": { "degrees": 84, "unit": "FAHRENHEIT" },
+        "minTemperature": { "degrees": 68, "unit": "FAHRENHEIT" },
+        "daytimeForecast": {
+          "weatherCondition": { "description": { "text": "Mostly sunny" }, "type": "MOSTLY_CLEAR" },
+          "precipitation": { "probability": { "type": "RAIN", "percent": 10 } }
+        },
+        "nighttimeForecast": {
+          "weatherCondition": { "description": { "text": "Clear" }, "type": "CLEAR" },
+          "precipitation": { "probability": { "type": "RAIN", "percent": 5 } }
+        },
+        "sunEvents": { "sunriseTime": "2026-08-02T10:22:00Z", "sunsetTime": "2026-08-03T00:18:00Z" }
+      }
+    ],
+    "timeZone": { "id": "America/New_York" }
+  },
+  "alerts": {
+    "weatherAlerts": [
+      {
+        "alertId": "fixture-alert-1",
+        "alertTitle": { "text": "Severe Thunderstorm Warning", "languageCode": "en" },
+        "eventType": "SEVERE_THUNDERSTORM_WARNING",
+        "areaName": "Wake County",
+        "instruction": ["Move indoors and away from windows."],
+        "safetyRecommendations": [
+          { "directive": "Seek shelter", "subtext": "Use a sturdy enclosed building." }
+        ],
+        "startTime": "2026-08-01T15:00:00Z",
+        "expirationTime": "2026-08-01T17:00:00Z",
+        "dataSource": {
+          "publisher": "NOAA",
+          "name": "National Weather Service",
+          "authorityUri": "https://www.weather.gov/"
+        },
+        "description": "Damaging wind gusts and frequent lightning are possible.",
+        "severity": "SEVERE",
+        "certainty": "LIKELY",
+        "urgency": "IMMEDIATE"
+      }
+    ],
+    "regionCode": "US"
+  }
+}

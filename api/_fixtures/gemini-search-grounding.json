@@ -1,0 +1,61 @@
+{
+  "id": "fixture_search_grounding",
+  "status": "completed",
+  "steps": [
+    {
+      "type": "thought",
+      "signature": "fixture-thought-signature"
+    },
+    {
+      "type": "google_search_call",
+      "id": "search_001",
+      "arguments": {
+        "queries": ["Gemini 3.6 Flash availability"]
+      },
+      "signature": "fixture-search-call-signature"
+    },
+    {
+      "type": "google_search_result",
+      "call_id": "search_001",
+      "result": [
+        {
+          "search_suggestions": "<div>Search suggestions</div>"
+        }
+      ],
+      "signature": "fixture-search-result-signature"
+    },
+    {
+      "type": "model_output",
+      "content": [
+        {
+          "type": "text",
+          "text": "Gemini 3.6 Flash is generally available for production use.",
+          "annotations": [
+            {
+              "type": "url_citation",
+              "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash#availability",
+              "title": " Gemini 3.6 Flash ",
+              "start_index": 0,
+              "end_index": 59
+            },
+            {
+              "type": "url_citation",
+              "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash#versions",
+              "title": "Duplicate canonical URL",
+              "start_index": 0,
+              "end_index": 59
+            },
+            {
+              "type": "url_citation",
+              "url": "http://example.com/insecure",
+              "title": "Insecure source",
+              "start_index": 0,
+              "end_index": 6
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "output_text": "Gemini 3.6 Flash is generally available for production use."
+}

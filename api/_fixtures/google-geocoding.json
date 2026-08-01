@@ -1,0 +1,72 @@
+{
+  "forward": {
+    "results": [
+      {
+        "place": "//places.googleapis.com/places/ChIJ9-BRny9arIkRrfARilK2kGc",
+        "placeId": "ChIJ9-BRny9arIkRrfARilK2kGc",
+        "location": {
+          "latitude": 35.7795897,
+          "longitude": -78.6381787
+        },
+        "granularity": "APPROXIMATE",
+        "formattedAddress": "Raleigh, NC, USA",
+        "postalAddress": {
+          "regionCode": "US",
+          "languageCode": "en",
+          "administrativeArea": "NC",
+          "locality": "Raleigh",
+          "addressLines": ["Raleigh"]
+        },
+        "addressComponents": [
+          {
+            "longText": "Raleigh",
+            "shortText": "Raleigh",
+            "types": ["locality", "political"],
+            "languageCode": "en"
+          },
+          {
+            "longText": "North Carolina",
+            "shortText": "NC",
+            "types": ["administrative_area_level_1", "political"],
+            "languageCode": "en"
+          },
+          {
+            "longText": "United States",
+            "shortText": "US",
+            "types": ["country", "political"],
+            "languageCode": "en"
+          }
+        ],
+        "types": ["locality", "political"]
+      }
+    ]
+  },
+  "reverse": {
+    "results": [
+      {
+        "placeId": "ChIJ9-BRny9arIkRrfARilK2kGc",
+        "location": {
+          "latitude": 35.7795897,
+          "longitude": -78.6381787
+        },
+        "granularity": "APPROXIMATE",
+        "formattedAddress": "Raleigh, NC, USA",
+        "postalAddress": {
+          "regionCode": "US",
+          "languageCode": "en",
+          "administrativeArea": "NC",
+          "locality": "Raleigh"
+        },
+        "addressComponents": [
+          {
+            "longText": "Raleigh",
+            "shortText": "Raleigh",
+            "types": ["locality", "political"],
+            "languageCode": "en"
+          }
+        ],
+        "types": ["locality", "political"]
+      }
+    ]
+  }
+}
