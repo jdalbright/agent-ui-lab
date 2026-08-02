@@ -9,6 +9,8 @@ import {
 } from "./gemini.js";
 
 type JsonSchema = Record<string, unknown>;
+type TrustedComponentName = (typeof TRUSTED_COMPONENT_NAMES)[number];
+type CompositionKind = "weather" | "comparison" | "research" | "narrative";
 
 const idSchema: JsonSchema = {
   type: "string",
@@ -343,14 +345,81 @@ export const SURFACE_SPEC_JSON_SCHEMA: JsonSchema = strictObject(
   ["kind", "rootId", "components"],
 );
 
-const COMPOSITION_INSTRUCTION = [
-  "You compose a SurfaceSpec for a trusted, server-owned component catalog.",
-  `Use only these component names: ${TRUSTED_COMPONENT_NAMES.join(", ")}.`,
-  "Every component ID must be unique, every child must exist, every component must be reachable from rootId, and layouts must be acyclic.",
-  "Use only the source IDs supplied in the evidence payload. Never create or alter a source ID.",
-  "Prefer weather components for weather evidence, comparison components for explicit comparisons, and research components for grounded research.",
-  "Return only the JSON object required by response_format.",
-].join(" ");
+const COMPONENTS_BY_KIND = {
+  weather: [
+    "Band",
+    "WeatherHero",
+    "RecommendationBand",
+    "HourlyForecast",
+    "DailyForecast",
+    "WeatherAlert",
+    "SourceList",
+  ],
+  comparison: [
+    "Band",
+    "Divider",
+    "ComparisonSummary",
+    "ComparisonTable",
+    "ComparisonChart",
+    "SourceList",
+  ],
+  research: ["Band", "Divider", "ResearchLead", "EvidenceList", "Timeline", "SourceList"],
+  narrative: ["Band", "Divider", "EditorialHeading", "TextBlock"],
+} as const satisfies Record<CompositionKind, readonly TrustedComponentName[]>;
+
+function componentName(schema: JsonSchema): TrustedComponentName | undefined {
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return undefined;
+  const component = (properties as Record<string, JsonSchema>).component;
+  const values = component?.enum;
+  if (!Array.isArray(values) || typeof values[0] !== "string") return undefined;
+  return TRUSTED_COMPONENT_NAMES.includes(values[0] as TrustedComponentName)
+    ? (values[0] as TrustedComponentName)
+    : undefined;
+}
+
+function requestedComparison(prompt: string): boolean {
+  return /\b(compare|comparison|versus|vs\.?|better|difference)\b/i.test(prompt);
+}
+
+function compositionKind(prompt: string, retrieval: GeminiRetrievalResult): CompositionKind {
+  if (requestedComparison(prompt)) return "comparison";
+  if (retrieval.evidence.length > 0) return "weather";
+  if (retrieval.sources.some((source) => source.provider === "google-search")) return "research";
+  return "narrative";
+}
+
+function responseSchema(kind: CompositionKind): JsonSchema {
+  const allowed = new Set<TrustedComponentName>(COMPONENTS_BY_KIND[kind]);
+  const variants = componentSchemas.filter((schema) => {
+    const name = componentName(schema);
+    return name !== undefined && allowed.has(name);
+  });
+
+  return strictObject(
+    {
+      kind: enumSchema([kind]),
+      rootId: idSchema,
+      components: {
+        type: "array",
+        minItems: 1,
+        maxItems: LIMITS.surfaceNodes,
+        items: { anyOf: variants },
+      },
+    },
+    ["kind", "rootId", "components"],
+  );
+}
+
+function compositionInstruction(kind: CompositionKind): string {
+  return [
+    "You compose a SurfaceSpec for a trusted, server-owned component catalog.",
+    `Create a ${kind} surface using only these component names: ${COMPONENTS_BY_KIND[kind].join(", ")}.`,
+    "Every component ID must be unique, every child must exist, every component must be reachable from rootId, and layouts must be acyclic.",
+    "Use only the source IDs supplied in the evidence payload. Never create or alter a source ID.",
+    "Return only the JSON object required by response_format.",
+  ].join(" ");
+}
 
 export interface ComposeSurfaceSpecInput {
   gemini: GeminiClient;
@@ -495,6 +564,7 @@ export async function composeSurfaceSpec({
   retrieval,
 }: ComposeSurfaceSpecInput): Promise<CompositionResult> {
   const payload = evidencePayload(prompt, clientContext, retrieval);
+  const kind = compositionKind(prompt, retrieval);
   let input = initialCompositionInput(payload);
   let lastFailure: ValidationFailure | undefined;
 
@@ -503,11 +573,11 @@ export async function composeSurfaceSpec({
       model: MODEL_ID,
       store: false,
       input,
-      system_instruction: COMPOSITION_INSTRUCTION,
+      system_instruction: compositionInstruction(kind),
       response_format: {
         type: "text",
         mime_type: "application/json",
-        schema: SURFACE_SPEC_JSON_SCHEMA,
+        schema: responseSchema(kind),
       },
     });
 

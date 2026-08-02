@@ -134,9 +134,26 @@ describe("composeSurfaceSpec", () => {
       mime_type: "application/json",
       schema: {
         type: "object",
+        properties: {
+          kind: { enum: ["research"] },
+        },
         required: ["kind", "rootId", "components"],
       },
     });
+    const runtimeSchema = (responseFormat as { schema: InspectableSchema }).schema;
+    const runtimeVariants = runtimeSchema.properties?.components?.items?.anyOf ?? [];
+    const runtimeNames = runtimeVariants.flatMap(
+      (variant) => variant.properties?.component?.enum ?? [],
+    );
+    expect(runtimeNames).toEqual([
+      "Band",
+      "Divider",
+      "ResearchLead",
+      "EvidenceList",
+      "Timeline",
+      "SourceList",
+    ]);
+    expect(runtimeNames).not.toContain("WeatherHero");
     expect("tools" in (requests[0] ?? {})).toBe(false);
     expect(requests[0]?.previous_interaction_id).toBeUndefined();
   });
