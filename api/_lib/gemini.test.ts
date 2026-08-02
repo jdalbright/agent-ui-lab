@@ -97,6 +97,25 @@ describe("createGeminiProvider", () => {
       },
     });
   });
+
+  it("reduces structured-output errors to a fixed privacy-safe category", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve("Invalid responseJsonSchema field"),
+      } as Response),
+    ) as unknown as typeof fetch;
+    const provider = createGeminiProvider({ apiKey: "unit-test-key", fetchImpl });
+
+    await expect(
+      provider.structuredOutput?.generate({
+        input: "Return JSON.",
+        systemInstruction: "Return JSON.",
+        schema: { type: "object" },
+      }),
+    ).rejects.toMatchObject({ providerCode: "PROVIDER_RESPONSE_SCHEMA" });
+  });
 });
 
 describe("runGeminiRetrieval", () => {

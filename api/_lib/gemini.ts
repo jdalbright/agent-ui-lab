@@ -157,6 +157,16 @@ export class GeminiProviderError extends Error {
   }
 }
 
+export class GeminiStructuredOutputError extends GeminiProviderError {
+  readonly providerCode: string;
+
+  constructor(providerCode: string) {
+    super("Gemini rejected the structured-output request.");
+    this.name = "GeminiStructuredOutputError";
+    this.providerCode = providerCode;
+  }
+}
+
 export class GeminiToolRoundLimitError extends GeminiProviderError {
   constructor() {
     super(`Gemini requested more than ${LIMITS.toolRounds} custom-tool rounds.`);
@@ -193,6 +203,31 @@ function generateContentText(payload: unknown): string {
     .trim();
   if (!text) throw new GeminiProviderError("Gemini returned an empty structured-output response.");
   return text;
+}
+
+function structuredOutputErrorCode(status: number, body: string): string {
+  const normalized = body.toLowerCase();
+  if (/response_?json_?schema|responsejsonschema/.test(normalized)) {
+    return "PROVIDER_RESPONSE_SCHEMA";
+  }
+  if (/response_?mime_?type|responsemimetype/.test(normalized)) {
+    return "PROVIDER_RESPONSE_MIME";
+  }
+  if (/response[_ ]?format/.test(normalized)) return "PROVIDER_RESPONSE_FORMAT";
+  if (/unknown name|cannot find field|unknown field/.test(normalized)) {
+    return "PROVIDER_UNKNOWN_FIELD";
+  }
+  if (/schema/.test(normalized) && /(complex|large|deep|depth|nested|too many)/.test(normalized)) {
+    return "PROVIDER_SCHEMA_COMPLEXITY";
+  }
+  if (/schema/.test(normalized)) return "PROVIDER_SCHEMA_REJECTED";
+  if (/(api key|authentication|permission|credential)/.test(normalized)) return "PROVIDER_AUTH";
+  if (/(quota|rate limit|resource exhausted)/.test(normalized)) return "PROVIDER_QUOTA";
+  if (/(model).*(not found|unsupported|unavailable)/.test(normalized)) {
+    return "PROVIDER_MODEL_UNAVAILABLE";
+  }
+  if (/invalid argument/.test(normalized)) return "PROVIDER_INVALID_ARGUMENT";
+  return `PROVIDER_HTTP_${status}`;
 }
 
 function assertInteractionStatus(
@@ -237,8 +272,8 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Gemin
           signal: request.signal,
         });
         if (!response.ok) {
-          throw new GeminiProviderError(
-            `Gemini structured output returned HTTP ${response.status}.`,
+          throw new GeminiStructuredOutputError(
+            structuredOutputErrorCode(response.status, await response.text()),
           );
         }
         return { text: generateContentText(await response.json()) };
