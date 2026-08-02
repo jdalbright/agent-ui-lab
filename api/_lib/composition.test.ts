@@ -129,10 +129,8 @@ describe("composeSurfaceSpec", () => {
       required: ["kind", "rootId", "components"],
     });
     const runtimeSchema = responseSchema as InspectableSchema;
-    const runtimeVariants = runtimeSchema.properties?.components?.items?.anyOf ?? [];
-    const runtimeNames = runtimeVariants.flatMap(
-      (variant) => variant.properties?.component?.enum ?? [],
-    );
+    const runtimeNode = runtimeSchema.properties?.components?.items;
+    const runtimeNames = runtimeNode?.properties?.component?.enum ?? [];
     expect(runtimeNames).toEqual([
       "Band",
       "Divider",
@@ -142,6 +140,8 @@ describe("composeSurfaceSpec", () => {
       "SourceList",
     ]);
     expect(runtimeNames).not.toContain("WeatherHero");
+    expect(runtimeNode?.anyOf).toBeUndefined();
+    expect(JSON.stringify(responseSchema).length).toBeLessThan(8_000);
     expect("tools" in (requests[0] ?? {})).toBe(false);
   });
 

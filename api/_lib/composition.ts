@@ -1,4 +1,5 @@
-import { LIMITS, TRUSTED_COMPONENT_NAMES } from "../../shared/constants.js";
+import { LIMITS } from "../../shared/constants.js";
+import type { TRUSTED_COMPONENT_NAMES } from "../../shared/constants.js";
 import type { ClientContext, SourceRecord, SurfaceSpec } from "../../shared/schemas.js";
 import { validateSurfaceSpec } from "../../shared/surface-validation.js";
 import {
@@ -366,16 +367,121 @@ const COMPONENTS_BY_KIND = {
   narrative: ["Band", "Divider", "EditorialHeading", "TextBlock"],
 } as const satisfies Record<CompositionKind, readonly TrustedComponentName[]>;
 
-function componentName(schema: JsonSchema): TrustedComponentName | undefined {
-  const properties = schema.properties;
-  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return undefined;
-  const component = (properties as Record<string, JsonSchema>).component;
-  const values = component?.enum;
-  if (!Array.isArray(values) || typeof values[0] !== "string") return undefined;
-  return TRUSTED_COMPONENT_NAMES.includes(values[0] as TrustedComponentName)
-    ? (values[0] as TrustedComponentName)
-    : undefined;
-}
+const optionalObject = (properties: Record<string, JsonSchema>): JsonSchema => ({
+  type: "object",
+  additionalProperties: false,
+  properties,
+});
+
+const weatherRuntimeItemSchema = optionalObject({
+  time: boundedString(40),
+  date: boundedString(60),
+  temperature: temperatureSchema,
+  high: temperatureSchema,
+  low: temperatureSchema,
+  precipitationProbability: probabilitySchema,
+  condition: weatherConditionSchema,
+});
+
+const researchRuntimeItemSchema = optionalObject({
+  date: boundedString(80),
+  title: boundedString(180),
+  detail: boundedString(500),
+  finding: boundedString(700),
+  sourceId: sourceIdSchema,
+});
+
+const RUNTIME_PROPERTIES_BY_KIND = {
+  weather: {
+    children: childrenSchema,
+    tone: enumSchema(["plain", "sky", "coral", "muted"]),
+    label: optionalBoundedString(80),
+    location: boundedString(120),
+    dateLabel: boundedString(80),
+    temperature: temperatureSchema,
+    unit: enumSchema(["F", "C"]),
+    condition: boundedString(80),
+    conditionKey: weatherConditionSchema,
+    recommendationLabel: boundedString(80),
+    recommendationValue: boundedString(120),
+    recommendationDetail: boundedString(240),
+    value: boundedString(160),
+    detail: boundedString(320),
+    confidence: enumSchema(["high", "medium", "low"]),
+    items: arraySchema(weatherRuntimeItemSchema, 1, 24),
+    title: boundedString(160),
+    severity: enumSchema(["minor", "moderate", "severe", "extreme"]),
+    description: boundedString(700),
+    sourceId: sourceIdSchema,
+    sourceIds: sourceIdsSchema,
+  },
+  comparison: {
+    children: childrenSchema,
+    tone: enumSchema(["plain", "sky", "coral", "muted"]),
+    label: optionalBoundedString(80),
+    title: boundedString(180),
+    recommendation: boundedString(400),
+    items: arraySchema(comparisonItemSchema, 2, 4),
+    caption: boundedString(160),
+    columns: arraySchema(boundedString(80), 2, 6),
+    rows: arraySchema(arraySchema(optionalBoundedString(160), 2, 6), 1, 12),
+    labels: arraySchema(boundedString(60), 2, 12),
+    series: arraySchema(chartSeriesSchema, 1, 4),
+    unit: optionalBoundedString(24),
+    sourceIds: sourceIdsSchema,
+  },
+  research: {
+    children: childrenSchema,
+    tone: enumSchema(["plain", "sky", "coral", "muted"]),
+    label: optionalBoundedString(80),
+    title: boundedString(220),
+    summary: boundedString(1_200),
+    sourceIds: sourceIdsSchema,
+    items: arraySchema(researchRuntimeItemSchema, 1, 12),
+  },
+  narrative: {
+    children: childrenSchema,
+    tone: enumSchema(["plain", "sky", "coral", "muted", "default", "bounded"]),
+    label: optionalBoundedString(80),
+    text: boundedString(2_000),
+    level: enumSchema(["h1", "h2", "h3"]),
+    align: enumSchema(["start", "center"]),
+  },
+} as const satisfies Record<CompositionKind, Record<string, JsonSchema>>;
+
+const COMPONENT_CONTRACTS_BY_KIND = {
+  weather: [
+    "Band: children, tone, optional label",
+    "WeatherHero: location, dateLabel, temperature, unit, condition, conditionKey, recommendationLabel, recommendationValue, recommendationDetail",
+    "RecommendationBand: label, value, detail, confidence",
+    "HourlyForecast: label, unit, items with time, temperature, precipitationProbability, condition",
+    "DailyForecast: label, unit, items with date, high, low, precipitationProbability, condition",
+    "WeatherAlert: title, severity, description, optional sourceId",
+    "SourceList: label, sourceIds",
+  ],
+  comparison: [
+    "Band: children, tone, optional label",
+    "Divider: optional label",
+    "ComparisonSummary: title, recommendation, items with label, value, optional detail, recommended",
+    "ComparisonTable: caption, columns, rows",
+    "ComparisonChart: title, labels, series with label and numeric values, optional unit",
+    "SourceList: label, sourceIds",
+  ],
+  research: [
+    "Band: children, tone, optional label",
+    "Divider: optional label",
+    "ResearchLead: title, summary, sourceIds",
+    "EvidenceList: label, items with title, finding, sourceId",
+    "Timeline: label, items with date, title, detail, optional sourceId",
+    "SourceList: label, sourceIds",
+  ],
+  narrative: [
+    "Band: children, tone, optional label",
+    "Divider: optional label",
+    "EditorialHeading: text, level, align",
+    "TextBlock: text, tone",
+  ],
+} as const satisfies Record<CompositionKind, readonly string[]>;
 
 function requestedComparison(prompt: string): boolean {
   return /\b(compare|comparison|versus|vs\.?|better|difference)\b/i.test(prompt);
@@ -389,12 +495,6 @@ function compositionKind(prompt: string, retrieval: GeminiRetrievalResult): Comp
 }
 
 function responseSchema(kind: CompositionKind): JsonSchema {
-  const allowed = new Set<TrustedComponentName>(COMPONENTS_BY_KIND[kind]);
-  const variants = componentSchemas.filter((schema) => {
-    const name = componentName(schema);
-    return name !== undefined && allowed.has(name);
-  });
-
   return strictObject(
     {
       kind: enumSchema([kind]),
@@ -403,7 +503,14 @@ function responseSchema(kind: CompositionKind): JsonSchema {
         type: "array",
         minItems: 1,
         maxItems: LIMITS.surfaceNodes,
-        items: { anyOf: variants },
+        items: strictObject(
+          {
+            id: idSchema,
+            component: enumSchema(COMPONENTS_BY_KIND[kind]),
+            ...RUNTIME_PROPERTIES_BY_KIND[kind],
+          },
+          ["id", "component"],
+        ),
       },
     },
     ["kind", "rootId", "components"],
@@ -415,6 +522,7 @@ function compositionInstruction(kind: CompositionKind): string {
     "You compose a SurfaceSpec for a trusted, server-owned component catalog.",
     `Create a ${kind} surface using only these component names: ${COMPONENTS_BY_KIND[kind].join(", ")}.`,
     "Every component ID must be unique, every child must exist, every component must be reachable from rootId, and layouts must be acyclic.",
+    `Component contracts: ${COMPONENT_CONTRACTS_BY_KIND[kind].join("; ")}.`,
     "Use only the source IDs supplied in the evidence payload. Never create or alter a source ID.",
     "Return only the JSON object required by response_format.",
   ].join(" ");
