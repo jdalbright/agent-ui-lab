@@ -106,6 +106,27 @@ describe("createGeminiProvider", () => {
       },
     });
   });
+
+  it("reduces provider error bodies to a privacy-safe category", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve("Invalid responseFormat schema: schema is too complex"),
+      } as Response),
+    ) as unknown as typeof fetch;
+    const provider = createGeminiProvider({ apiKey: "unit-test-key", fetchImpl });
+
+    await expect(
+      provider.structuredOutput?.generate({
+        input: "Return JSON.",
+        systemInstruction: "Return JSON.",
+        schema: { type: "object" },
+      }),
+    ).rejects.toMatchObject({
+      providerCode: "PROVIDER_RESPONSE_FORMAT",
+    });
+  });
 });
 
 describe("runGeminiRetrieval", () => {
