@@ -202,11 +202,10 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Gemin
           store: false,
           input: request.input,
           system_instruction: request.systemInstruction,
-          response_format: {
-            type: "text",
-            mime_type: "application/json",
-            schema: request.schema,
-          },
+          response_mime_type: "application/json",
+          response_format: request.schema as NonNullable<
+            Interactions.CreateModelInteractionParamsNonStreaming["response_format"]
+          >,
         });
         return { text: generatedText(interaction as GeminiInteraction) };
       },
