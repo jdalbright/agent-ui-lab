@@ -1,7 +1,10 @@
-import type { GenerateContentParameters } from "@google/genai";
 import { describe, expect, it, vi } from "vitest";
 import type { ClientContext, SourceRecord, SurfaceSpec } from "../../shared/schemas.js";
-import type { GeminiClient, GeminiRetrievalResult } from "./gemini.js";
+import type {
+  GeminiClient,
+  GeminiRetrievalResult,
+  GeminiStructuredOutputRequest,
+} from "./gemini.js";
 import { GeminiProviderError } from "./gemini.js";
 import {
   CompositionValidationError,
@@ -72,8 +75,8 @@ function response(output: unknown): { text: string } {
 }
 
 function fakeClient(responses: Array<{ text: string } | Error>) {
-  const requests: GenerateContentParameters[] = [];
-  const generateContent = vi.fn((request: GenerateContentParameters) => {
+  const requests: GeminiStructuredOutputRequest[] = [];
+  const generate = vi.fn((request: GeminiStructuredOutputRequest) => {
     requests.push(request);
     const next = responses.shift();
     if (!next) throw new Error("No fake composition response remains");
@@ -83,7 +86,7 @@ function fakeClient(responses: Array<{ text: string } | Error>) {
   return {
     client: {
       interactions: { create: vi.fn() },
-      models: { generateContent },
+      structuredOutput: { generate },
     } as unknown as GeminiClient,
     requests,
   };
@@ -113,13 +116,11 @@ describe("composeSurfaceSpec", () => {
 
     expect(result).toEqual({ spec: validSpec, repairCount: 0 });
     expect(requests).toHaveLength(1);
-    expect(requests[0]).toMatchObject({
-      model: "gemini-3.6-flash",
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
-    const responseSchema = requests[0]?.config?.responseJsonSchema;
+    expect(requests[0]?.input).toContain("Evidence payload:");
+    expect(requests[0]?.systemInstruction).toContain(
+      "trusted, server-owned component catalog",
+    );
+    const responseSchema = requests[0]?.schema;
     expect(responseSchema).toMatchObject({
       type: "object",
       properties: {
@@ -141,7 +142,7 @@ describe("composeSurfaceSpec", () => {
       "SourceList",
     ]);
     expect(runtimeNames).not.toContain("WeatherHero");
-    expect(requests[0]?.config?.tools).toBeUndefined();
+    expect("tools" in (requests[0] ?? {})).toBe(false);
   });
 
   it("makes one bounded repair call after schema or graph validation fails", async () => {
@@ -161,8 +162,8 @@ describe("composeSurfaceSpec", () => {
 
     expect(result).toEqual({ spec: validSpec, repairCount: 1 });
     expect(requests).toHaveLength(2);
-    expect(requests[1]?.config?.tools).toBeUndefined();
-    expect(JSON.stringify(requests[1]?.contents)).toContain("root component");
+    expect("tools" in (requests[1] ?? {})).toBe(false);
+    expect(requests[1]?.input).toContain("root component");
   });
 
   it("fails after exactly one unsuccessful repair attempt", async () => {

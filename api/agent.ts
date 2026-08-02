@@ -361,6 +361,7 @@ export default async function handler(request: ServerRequest, response: ServerRe
           prompt: contextualPrompt(agentRequest, turns),
           clientContext: agentRequest.client,
           retrieval,
+          signal: controller.signal,
         }),
         controller.signal,
       );

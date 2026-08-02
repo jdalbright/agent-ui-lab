@@ -1,4 +1,4 @@
-import { LIMITS, MODEL_ID, TRUSTED_COMPONENT_NAMES } from "../../shared/constants.js";
+import { LIMITS, TRUSTED_COMPONENT_NAMES } from "../../shared/constants.js";
 import type { ClientContext, SourceRecord, SurfaceSpec } from "../../shared/schemas.js";
 import { validateSurfaceSpec } from "../../shared/surface-validation.js";
 import {
@@ -425,6 +425,7 @@ export interface ComposeSurfaceSpecInput {
   prompt: string;
   clientContext: ClientContext;
   retrieval: GeminiRetrievalResult;
+  signal?: AbortSignal;
 }
 
 export interface CompositionResult {
@@ -536,10 +537,11 @@ export async function composeSurfaceSpec({
   prompt,
   clientContext,
   retrieval,
+  signal,
 }: ComposeSurfaceSpecInput): Promise<CompositionResult> {
   const payload = evidencePayload(prompt, clientContext, retrieval);
   const kind = compositionKind(prompt, retrieval);
-  const generator = gemini.models;
+  const generator = gemini.structuredOutput;
   if (!generator) throw new GeminiProviderError("Gemini structured composition is unavailable.");
   let input = initialCompositionInput(payload);
   let lastFailure: ValidationFailure | undefined;
@@ -547,16 +549,14 @@ export async function composeSurfaceSpec({
   for (const repairCount of [0, 1] as const) {
     let output: { text?: string };
     try {
-      output = await generator.generateContent({
-        model: MODEL_ID,
-        contents: input,
-        config: {
-          systemInstruction: compositionInstruction(kind),
-          responseMimeType: "application/json",
-          responseJsonSchema: responseSchema(kind),
-        },
+      output = await generator.generate({
+        input,
+        systemInstruction: compositionInstruction(kind),
+        schema: responseSchema(kind),
+        signal,
       });
     } catch (error) {
+      if (error instanceof GeminiProviderError) throw error;
       throw new GeminiProviderError("Gemini composition request failed.", { cause: error });
     }
 
