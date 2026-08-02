@@ -172,18 +172,6 @@ function assertInteractionStatus(
   }
 }
 
-function generatedText(interaction: GeminiInteraction): string {
-  if (interaction.status !== "completed") {
-    throw new GeminiProviderError(
-      `Gemini returned status ${interaction.status}; expected completed.`,
-    );
-  }
-
-  const text = (interaction.output_text ?? outputTextFromSteps(interaction.steps)).trim();
-  if (!text) throw new GeminiProviderError("Gemini returned an empty structured-output response.");
-  return text;
-}
-
 export function createGeminiProvider(options: GeminiProviderOptions = {}): GeminiClient {
   const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY;
   if (!apiKey) throw new GeminiProviderError("GEMINI_API_KEY is not configured.");
@@ -197,17 +185,20 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Gemin
     structuredOutput: {
       async generate(request) {
         if (request.signal?.aborted) throw new DOMException("Request timed out", "AbortError");
-        const interaction = await sdk.interactions.create({
+        const response = await sdk.models.generateContent({
           model: MODEL_ID,
-          store: false,
-          input: request.input,
-          system_instruction: request.systemInstruction,
-          response_mime_type: "application/json",
-          response_format: request.schema as NonNullable<
-            Interactions.CreateModelInteractionParamsNonStreaming["response_format"]
-          >,
+          contents: request.input,
+          config: {
+            systemInstruction: request.systemInstruction,
+            responseMimeType: "application/json",
+            responseJsonSchema: request.schema,
+          },
         });
-        return { text: generatedText(interaction as GeminiInteraction) };
+        const text = response.text?.trim();
+        if (!text) {
+          throw new GeminiProviderError("Gemini returned an empty structured-output response.");
+        }
+        return { text };
       },
     },
   };
