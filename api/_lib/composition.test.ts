@@ -122,6 +122,7 @@ describe("composeSurfaceSpec", () => {
     expect(requests[0]).toMatchObject({
       model: "gemini-3.6-flash",
       store: false,
+      response_mime_type: "application/json",
       response_format: {
         type: "text",
         mime_type: "application/json",

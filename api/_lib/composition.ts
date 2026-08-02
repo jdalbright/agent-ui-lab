@@ -574,6 +574,7 @@ export async function composeSurfaceSpec({
       store: false,
       input,
       system_instruction: compositionInstruction(kind),
+      response_mime_type: "application/json",
       response_format: {
         type: "text",
         mime_type: "application/json",
