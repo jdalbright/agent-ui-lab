@@ -1,4 +1,3 @@
-import type { Interactions } from "@google/genai";
 import { LIMITS, MODEL_ID, TRUSTED_COMPONENT_NAMES } from "../../shared/constants.js";
 import type { ClientContext, SourceRecord, SurfaceSpec } from "../../shared/schemas.js";
 import { validateSurfaceSpec } from "../../shared/surface-validation.js";
@@ -484,27 +483,6 @@ function evidencePayload(
   };
 }
 
-function userInput(text: string): Interactions.UserInputStep[] {
-  return [
-    {
-      type: "user_input",
-      content: [{ type: "text", text }],
-    },
-  ];
-}
-
-function interactionText(interaction: { output_text?: string; steps: Interactions.Step[] }): string {
-  if (interaction.output_text) return interaction.output_text;
-  const text: string[] = [];
-  for (const step of interaction.steps) {
-    if (step.type !== "model_output") continue;
-    for (const content of step.content ?? []) {
-      if (content.type === "text") text.push(content.text);
-    }
-  }
-  return text.join("");
-}
-
 function boundedIssue(issue: string): string {
   return issue.replace(/\s+/g, " ").trim().slice(0, 160);
 }
@@ -533,28 +511,24 @@ function validateComposition(rawOutput: string, sources: readonly SourceRecord[]
   return { success: true, spec: validation.spec };
 }
 
-function initialCompositionInput(payload: Record<string, unknown>): Interactions.UserInputStep[] {
-  return userInput(
-    [
-      "Create the best concise SurfaceSpec for this request and evidence.",
-      "Evidence payload:",
-      JSON.stringify(payload),
-    ].join("\n\n"),
-  );
+function initialCompositionInput(payload: Record<string, unknown>): string {
+  return [
+    "Create the best concise SurfaceSpec for this request and evidence.",
+    "Evidence payload:",
+    JSON.stringify(payload),
+  ].join("\n\n");
 }
 
 function repairCompositionInput(
   payload: Record<string, unknown>,
   failure: ValidationFailure,
-): Interactions.UserInputStep[] {
-  return userInput(
-    [
-      "Repair the invalid SurfaceSpec. Return a complete replacement object, not a patch.",
-      `Validation issues: ${JSON.stringify(failure.issues.slice(0, 8))}`,
-      `Invalid output: ${failure.rawOutput.slice(0, 32_000)}`,
-      `Original evidence payload: ${JSON.stringify(payload)}`,
-    ].join("\n\n"),
-  );
+): string {
+  return [
+    "Repair the invalid SurfaceSpec. Return a complete replacement object, not a patch.",
+    `Validation issues: ${JSON.stringify(failure.issues.slice(0, 8))}`,
+    `Invalid output: ${failure.rawOutput.slice(0, 32_000)}`,
+    `Original evidence payload: ${JSON.stringify(payload)}`,
+  ].join("\n\n");
 }
 
 export async function composeSurfaceSpec({
@@ -565,30 +539,28 @@ export async function composeSurfaceSpec({
 }: ComposeSurfaceSpecInput): Promise<CompositionResult> {
   const payload = evidencePayload(prompt, clientContext, retrieval);
   const kind = compositionKind(prompt, retrieval);
+  const generator = gemini.models;
+  if (!generator) throw new GeminiProviderError("Gemini structured composition is unavailable.");
   let input = initialCompositionInput(payload);
   let lastFailure: ValidationFailure | undefined;
 
   for (const repairCount of [0, 1] as const) {
-    const interaction = await gemini.interactions.create({
-      model: MODEL_ID,
-      store: false,
-      input,
-      system_instruction: compositionInstruction(kind),
-      response_mime_type: "application/json",
-      response_format: {
-        type: "text",
-        mime_type: "application/json",
-        schema: responseSchema(kind),
-      },
-    });
-
-    if (interaction.status !== "completed") {
-      throw new GeminiProviderError(
-        `Gemini returned status ${interaction.status}; expected completed.`,
-      );
+    let output: { text?: string };
+    try {
+      output = await generator.generateContent({
+        model: MODEL_ID,
+        contents: input,
+        config: {
+          systemInstruction: compositionInstruction(kind),
+          responseMimeType: "application/json",
+          responseJsonSchema: responseSchema(kind),
+        },
+      });
+    } catch (error) {
+      throw new GeminiProviderError("Gemini composition request failed.", { cause: error });
     }
 
-    const validation = validateComposition(interactionText(interaction), retrieval.sources);
+    const validation = validateComposition(output.text ?? "", retrieval.sources);
     if (validation.success) return { spec: validation.spec, repairCount };
 
     lastFailure = validation;

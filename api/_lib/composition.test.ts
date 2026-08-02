@@ -1,7 +1,7 @@
-import type { Interactions } from "@google/genai";
+import type { GenerateContentParameters } from "@google/genai";
 import { describe, expect, it, vi } from "vitest";
 import type { ClientContext, SourceRecord, SurfaceSpec } from "../../shared/schemas.js";
-import type { GeminiClient, GeminiInteraction, GeminiRetrievalResult } from "./gemini.js";
+import type { GeminiClient, GeminiRetrievalResult } from "./gemini.js";
 import { GeminiProviderError } from "./gemini.js";
 import {
   CompositionValidationError,
@@ -67,30 +67,24 @@ const retrieval: GeminiRetrievalResult = {
   toolRounds: 0,
 };
 
-function response(output: unknown): GeminiInteraction {
-  return {
-    id: "composition_fixture",
-    status: "completed",
-    steps: [
-      {
-        type: "model_output",
-        content: [{ type: "text", text: JSON.stringify(output) }],
-      },
-    ],
-    output_text: typeof output === "string" ? output : JSON.stringify(output),
-  };
+function response(output: unknown): { text: string } {
+  return { text: typeof output === "string" ? output : JSON.stringify(output) };
 }
 
-function fakeClient(responses: GeminiInteraction[]) {
-  const requests: Interactions.CreateModelInteractionParamsNonStreaming[] = [];
-  const create = vi.fn((request: Interactions.CreateModelInteractionParamsNonStreaming) => {
+function fakeClient(responses: Array<{ text: string } | Error>) {
+  const requests: GenerateContentParameters[] = [];
+  const generateContent = vi.fn((request: GenerateContentParameters) => {
     requests.push(request);
     const next = responses.shift();
     if (!next) throw new Error("No fake composition response remains");
+    if (next instanceof Error) return Promise.reject(next);
     return Promise.resolve(next);
   });
   return {
-    client: { interactions: { create } } satisfies GeminiClient,
+    client: {
+      interactions: { create: vi.fn() },
+      models: { generateContent },
+    } as unknown as GeminiClient,
     requests,
   };
 }
@@ -107,7 +101,7 @@ describe("composeSurfaceSpec", () => {
     expect(timeline?.properties?.items?.items?.required).not.toContain("sourceId");
   });
 
-  it("uses a separate stateless no-tools JSON-schema interaction", async () => {
+  it("uses a separate no-tools structured-output composition call", async () => {
     const { client, requests } = fakeClient([response(validSpec)]);
 
     const result = await composeSurfaceSpec({
@@ -121,27 +115,19 @@ describe("composeSurfaceSpec", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({
       model: "gemini-3.6-flash",
-      store: false,
-      response_mime_type: "application/json",
-      response_format: {
-        type: "text",
-        mime_type: "application/json",
+      config: {
+        responseMimeType: "application/json",
       },
     });
-    const responseFormat = requests[0]?.response_format;
-    expect(Array.isArray(responseFormat)).toBe(false);
-    expect(responseFormat).toMatchObject({
-      type: "text",
-      mime_type: "application/json",
-      schema: {
-        type: "object",
-        properties: {
-          kind: { enum: ["research"] },
-        },
-        required: ["kind", "rootId", "components"],
+    const responseSchema = requests[0]?.config?.responseJsonSchema;
+    expect(responseSchema).toMatchObject({
+      type: "object",
+      properties: {
+        kind: { enum: ["research"] },
       },
+      required: ["kind", "rootId", "components"],
     });
-    const runtimeSchema = (responseFormat as { schema: InspectableSchema }).schema;
+    const runtimeSchema = responseSchema as InspectableSchema;
     const runtimeVariants = runtimeSchema.properties?.components?.items?.anyOf ?? [];
     const runtimeNames = runtimeVariants.flatMap(
       (variant) => variant.properties?.component?.enum ?? [],
@@ -155,8 +141,7 @@ describe("composeSurfaceSpec", () => {
       "SourceList",
     ]);
     expect(runtimeNames).not.toContain("WeatherHero");
-    expect("tools" in (requests[0] ?? {})).toBe(false);
-    expect(requests[0]?.previous_interaction_id).toBeUndefined();
+    expect(requests[0]?.config?.tools).toBeUndefined();
   });
 
   it("makes one bounded repair call after schema or graph validation fails", async () => {
@@ -176,8 +161,8 @@ describe("composeSurfaceSpec", () => {
 
     expect(result).toEqual({ spec: validSpec, repairCount: 1 });
     expect(requests).toHaveLength(2);
-    expect("tools" in (requests[1] ?? {})).toBe(false);
-    expect(JSON.stringify(requests[1]?.input)).toContain("root component");
+    expect(requests[1]?.config?.tools).toBeUndefined();
+    expect(JSON.stringify(requests[1]?.contents)).toContain("root component");
   });
 
   it("fails after exactly one unsuccessful repair attempt", async () => {
@@ -198,11 +183,7 @@ describe("composeSurfaceSpec", () => {
 
   it("does not spend the repair attempt on a failed provider interaction", async () => {
     const { client, requests } = fakeClient([
-      {
-        id: "composition_failed",
-        status: "failed",
-        steps: [],
-      },
+      new Error("provider failed"),
     ]);
 
     await expect(

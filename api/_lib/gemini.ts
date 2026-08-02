@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { GoogleGenAI, type Interactions } from "@google/genai";
+import { GoogleGenAI, type GenerateContentParameters, type Interactions } from "@google/genai";
 import { z } from "zod";
 import { LIMITS, MODEL_ID } from "../../shared/constants.js";
 import { canonicalizeSafeExternalHttpsUrl } from "../../shared/safe-url.js";
@@ -92,6 +92,9 @@ export interface GeminiClient {
     create(
       request: Interactions.CreateModelInteractionParamsNonStreaming,
     ): Promise<GeminiInteraction>;
+  };
+  models?: {
+    generateContent(request: GenerateContentParameters): Promise<{ text?: string }>;
   };
 }
 
