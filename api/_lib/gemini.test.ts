@@ -3,13 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import searchFixture from "../_fixtures/gemini-search-grounding.json" with { type: "json" };
 import type { ClientContext, SourceRecord } from "../../shared/schemas.js";
 import {
-  createGeminiProvider,
   GeminiProviderError,
   GeminiToolRoundLimitError,
   type GeminiClient,
   type GeminiInteraction,
   normalizeGoogleSearchSources,
   runGeminiRetrieval,
+  structuredOutputFromInteraction,
 } from "./gemini.js";
 
 const clientContext: ClientContext = {
@@ -51,70 +51,36 @@ function functionCallResponse(id: string, signature: string): GeminiInteraction 
   };
 }
 
-describe("createGeminiProvider", () => {
-  it("sends the legacy structured-output fields to v1beta without putting the key in the URL", async () => {
-    const fetchImpl = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () =>
-          Promise.resolve({
-            candidates: [{ content: { parts: [{ text: '{"label":"ready"}' }] } }],
-          }),
-      } as Response),
-    ) as unknown as typeof fetch;
-    const provider = createGeminiProvider({ apiKey: "unit-test-key", fetchImpl });
-
-    const output = await provider.structuredOutput?.generate({
-      input: "Return a short label.",
-      systemInstruction: "Return only the requested JSON.",
-      schema: {
-        type: "object",
-        properties: { label: { type: "string" } },
-        required: ["label"],
-        additionalProperties: false,
-      },
-    });
-
-    expect(output).toEqual({ text: '{"label":"ready"}' });
-    const [url, init] = vi.mocked(fetchImpl).mock.calls[0] ?? [];
-    expect(typeof url).toBe("string");
-    if (typeof url !== "string") throw new TypeError("Expected a string provider URL.");
-    expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
-    );
-    expect(url).not.toContain("unit-test-key");
-    expect(new Headers(init?.headers).get("x-goog-api-key")).toBe("unit-test-key");
-    expect(typeof init?.body).toBe("string");
-    if (typeof init?.body !== "string") throw new TypeError("Expected a JSON request body.");
-    expect(JSON.parse(init.body) as unknown).toMatchObject({
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseJsonSchema: {
-          type: "object",
-          required: ["label"],
+describe("structuredOutputFromInteraction", () => {
+  it("accepts exactly one declarative SurfaceSpec emission", () => {
+    const interaction: GeminiInteraction = {
+      id: "composition_1",
+      status: "requires_action",
+      steps: [
+        {
+          type: "function_call",
+          id: "surface_1",
+          name: "emit_surface_spec",
+          arguments: { kind: "narrative", rootId: "root", components: [] },
         },
-      },
+      ],
+    };
+
+    expect(JSON.parse(structuredOutputFromInteraction(interaction)) as unknown).toEqual({
+      kind: "narrative",
+      rootId: "root",
+      components: [],
     });
   });
 
-  it("reduces structured-output errors to a fixed privacy-safe category", async () => {
-    const fetchImpl = vi.fn(() =>
-      Promise.resolve({
-        ok: false,
-        status: 400,
-        text: () => Promise.resolve("Invalid responseJsonSchema field"),
-      } as Response),
-    ) as unknown as typeof fetch;
-    const provider = createGeminiProvider({ apiKey: "unit-test-key", fetchImpl });
-
-    await expect(
-      provider.structuredOutput?.generate({
-        input: "Return JSON.",
-        systemInstruction: "Return JSON.",
-        schema: { type: "object" },
+  it("rejects narrative output instead of treating it as a SurfaceSpec", () => {
+    expect(() =>
+      structuredOutputFromInteraction({
+        id: "composition_2",
+        status: "completed",
+        steps: [{ type: "model_output", content: [{ type: "text", text: "not a surface" }] }],
       }),
-    ).rejects.toMatchObject({ providerCode: "PROVIDER_RESPONSE_SCHEMA" });
+    ).toThrow(GeminiProviderError);
   });
 });
 

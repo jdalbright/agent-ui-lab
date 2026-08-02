@@ -524,7 +524,7 @@ function compositionInstruction(kind: CompositionKind): string {
     "Every component ID must be unique, every child must exist, every component must be reachable from rootId, and layouts must be acyclic.",
     `Component contracts: ${COMPONENT_CONTRACTS_BY_KIND[kind].join("; ")}.`,
     "Use only the source IDs supplied in the evidence payload. Never create or alter a source ID.",
-    "Return only the JSON object required by response_format.",
+    "Provide one complete object matching the supplied composition schema.",
   ].join(" ");
 }
 

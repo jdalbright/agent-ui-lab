@@ -11,8 +11,7 @@ import {
 } from "../../shared/schemas.js";
 
 const STABLE_API_VERSION = "v1" as const;
-const STRUCTURED_OUTPUT_ENDPOINT =
-  `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent`;
+const STRUCTURED_OUTPUT_FUNCTION = "emit_surface_spec";
 
 const WEATHER_TOOL = {
   type: "function",
@@ -102,7 +101,6 @@ export interface GeminiClient {
 
 export interface GeminiProviderOptions {
   apiKey?: string;
-  fetchImpl?: typeof fetch;
 }
 
 export interface GeminiStructuredOutputRequest {
@@ -157,16 +155,6 @@ export class GeminiProviderError extends Error {
   }
 }
 
-export class GeminiStructuredOutputError extends GeminiProviderError {
-  readonly providerCode: string;
-
-  constructor(providerCode: string) {
-    super("Gemini rejected the structured-output request.");
-    this.name = "GeminiStructuredOutputError";
-    this.providerCode = providerCode;
-  }
-}
-
 export class GeminiToolRoundLimitError extends GeminiProviderError {
   constructor() {
     super(`Gemini requested more than ${LIMITS.toolRounds} custom-tool rounds.`);
@@ -174,60 +162,17 @@ export class GeminiToolRoundLimitError extends GeminiProviderError {
   }
 }
 
-const GenerateContentResponseSchema = z
-  .object({
-    candidates: z
-      .array(
-        z
-          .object({
-            content: z
-              .object({
-                parts: z.array(z.object({ text: z.string().optional() }).passthrough()),
-              })
-              .passthrough(),
-          })
-          .passthrough(),
-      )
-      .min(1),
-  })
-  .passthrough();
-
-function generateContentText(payload: unknown): string {
-  const parsed = GenerateContentResponseSchema.safeParse(payload);
-  if (!parsed.success) {
-    throw new GeminiProviderError("Gemini returned an invalid structured-output response.");
+export function structuredOutputFromInteraction(interaction: GeminiInteraction): string {
+  const calls = interaction.steps.filter(
+    (step): step is Interactions.FunctionCallStep =>
+      step.type === "function_call" && step.name === STRUCTURED_OUTPUT_FUNCTION,
+  );
+  if (interaction.status !== "requires_action" || calls.length !== 1) {
+    throw new GeminiProviderError("Gemini did not emit exactly one structured SurfaceSpec.");
   }
-  const text = parsed.data.candidates[0]?.content.parts
-    .map((part) => part.text ?? "")
-    .join("")
-    .trim();
-  if (!text) throw new GeminiProviderError("Gemini returned an empty structured-output response.");
-  return text;
-}
-
-function structuredOutputErrorCode(status: number, body: string): string {
-  const normalized = body.toLowerCase();
-  if (/response_?json_?schema|responsejsonschema/.test(normalized)) {
-    return "PROVIDER_RESPONSE_SCHEMA";
-  }
-  if (/response_?mime_?type|responsemimetype/.test(normalized)) {
-    return "PROVIDER_RESPONSE_MIME";
-  }
-  if (/response[_ ]?format/.test(normalized)) return "PROVIDER_RESPONSE_FORMAT";
-  if (/unknown name|cannot find field|unknown field/.test(normalized)) {
-    return "PROVIDER_UNKNOWN_FIELD";
-  }
-  if (/schema/.test(normalized) && /(complex|large|deep|depth|nested|too many)/.test(normalized)) {
-    return "PROVIDER_SCHEMA_COMPLEXITY";
-  }
-  if (/schema/.test(normalized)) return "PROVIDER_SCHEMA_REJECTED";
-  if (/(api key|authentication|permission|credential)/.test(normalized)) return "PROVIDER_AUTH";
-  if (/(quota|rate limit|resource exhausted)/.test(normalized)) return "PROVIDER_QUOTA";
-  if (/(model).*(not found|unsupported|unavailable)/.test(normalized)) {
-    return "PROVIDER_MODEL_UNAVAILABLE";
-  }
-  if (/invalid argument/.test(normalized)) return "PROVIDER_INVALID_ARGUMENT";
-  return `PROVIDER_HTTP_${status}`;
+  const serialized = JSON.stringify(calls[0]?.arguments);
+  if (!serialized) throw new GeminiProviderError("Gemini emitted invalid SurfaceSpec arguments.");
+  return serialized;
 }
 
 function assertInteractionStatus(
@@ -244,7 +189,6 @@ function assertInteractionStatus(
 export function createGeminiProvider(options: GeminiProviderOptions = {}): GeminiClient {
   const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY;
   if (!apiKey) throw new GeminiProviderError("GEMINI_API_KEY is not configured.");
-  const fetchImpl = options.fetchImpl ?? fetch;
   const sdk = new GoogleGenAI({
     apiKey,
     httpOptions: { apiVersion: STABLE_API_VERSION },
@@ -255,28 +199,29 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Gemin
     structuredOutput: {
       async generate(request) {
         if (request.signal?.aborted) throw new DOMException("Request timed out", "AbortError");
-        const response = await fetchImpl(STRUCTURED_OUTPUT_ENDPOINT, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": apiKey,
-          },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: request.input }] }],
-            systemInstruction: { parts: [{ text: request.systemInstruction }] },
-            generationConfig: {
-              responseMimeType: "application/json",
-              responseJsonSchema: request.schema,
+        const interaction = await sdk.interactions.create({
+          model: MODEL_ID,
+          store: false,
+          input: [
+            {
+              type: "user_input",
+              content: [{ type: "text", text: request.input }],
             },
-          }),
-          signal: request.signal,
+          ],
+          system_instruction: [
+            request.systemInstruction,
+            `Call ${STRUCTURED_OUTPUT_FUNCTION} exactly once. Do not return narrative text.`,
+          ].join(" "),
+          tools: [
+            {
+              type: "function",
+              name: STRUCTURED_OUTPUT_FUNCTION,
+              description: "Emits one complete trusted SurfaceSpec for server validation.",
+              parameters: request.schema,
+            },
+          ],
         });
-        if (!response.ok) {
-          throw new GeminiStructuredOutputError(
-            structuredOutputErrorCode(response.status, await response.text()),
-          );
-        }
-        return { text: generateContentText(await response.json()) };
+        return { text: structuredOutputFromInteraction(interaction as GeminiInteraction) };
       },
     },
   };
