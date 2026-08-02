@@ -17,5 +17,5 @@
       "@shared/*": ["shared/*"]
     }
   },
-  "include": ["api", "shared"]
+  "include": ["api", "shared", "tests/api"]
 }

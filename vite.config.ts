@@ -20,7 +20,12 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}", "api/**/*.test.ts", "shared/**/*.test.ts"],
+    include: [
+      "src/**/*.test.{ts,tsx}",
+      "api/**/*.test.ts",
+      "shared/**/*.test.ts",
+      "tests/**/*.test.ts",
+    ],
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary", "html"],

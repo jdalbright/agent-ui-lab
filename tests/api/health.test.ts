@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import handler from "./health.js";
+import handler from "../../api/health.js";
 
 type ResponseBody = unknown;
 

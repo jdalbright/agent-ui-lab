@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentRequest, StreamEvent } from "../shared/schemas.js";
-import handler from "./agent.js";
-import type { ServerRequest, ServerResponse } from "./_lib/http-types.js";
-import { resetMemoryRateLimitForTests } from "./_lib/rate-limit.js";
+import type { AgentRequest, StreamEvent } from "../../shared/schemas.js";
+import handler from "../../api/agent.js";
+import type { ServerRequest, ServerResponse } from "../../api/_lib/http-types.js";
+import { resetMemoryRateLimitForTests } from "../../api/_lib/rate-limit.js";
 
 function agentBody(prompt: string): AgentRequest {
   return {
