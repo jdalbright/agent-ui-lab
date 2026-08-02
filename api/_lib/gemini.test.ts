@@ -59,7 +59,9 @@ describe("createGeminiProvider", () => {
         status: 200,
         json: () =>
           Promise.resolve({
-            candidates: [{ content: { parts: [{ text: '{"label":"ready"}' }] } }],
+            status: "completed",
+            output_text: '{"label":"ready"}',
+            steps: [],
           }),
       } as Response),
     ) as unknown as typeof fetch;
@@ -82,26 +84,25 @@ describe("createGeminiProvider", () => {
     expect(typeof url).toBe("string");
     if (typeof url !== "string") throw new TypeError("Expected a string provider URL.");
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/interactions",
     );
     expect(url).not.toContain("unit-test-key");
     expect(new Headers(init?.headers).get("x-goog-api-key")).toBe("unit-test-key");
     expect(typeof init?.body).toBe("string");
     if (typeof init?.body !== "string") throw new TypeError("Expected a JSON request body.");
     expect(JSON.parse(init.body) as unknown).toEqual({
-      contents: [{ role: "user", parts: [{ text: "Return a short label." }] }],
-      systemInstruction: { parts: [{ text: "Return only the requested JSON." }] },
-      generationConfig: {
-        responseFormat: {
-          text: {
-            mimeType: "application/json",
-            schema: {
-              type: "object",
-              properties: { label: { type: "string" } },
-              required: ["label"],
-              additionalProperties: false,
-            },
-          },
+      model: "gemini-3.6-flash",
+      store: false,
+      input: "Return a short label.",
+      system_instruction: "Return only the requested JSON.",
+      response_format: {
+        type: "text",
+        mime_type: "application/json",
+        schema: {
+          type: "object",
+          properties: { label: { type: "string" } },
+          required: ["label"],
+          additionalProperties: false,
         },
       },
     });

@@ -12,7 +12,7 @@ import {
 
 const STABLE_API_VERSION = "v1" as const;
 const STRUCTURED_OUTPUT_ENDPOINT =
-  `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent`;
+  "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 const WEATHER_TOOL = {
   type: "function",
@@ -185,34 +185,40 @@ function assertInteractionStatus(
   }
 }
 
-const GenerateContentResponseSchema = z
+const StructuredInteractionResponseSchema = z
   .object({
-    candidates: z
-      .array(
-        z
-          .object({
-            content: z
-              .object({
-                parts: z.array(z.object({ text: z.string().optional() }).passthrough()),
-              })
-              .passthrough(),
-          })
-          .passthrough(),
-      )
-      .min(1),
+    status: z.string(),
+    output_text: z.string().optional(),
+    steps: z.array(
+      z
+        .object({
+          type: z.string(),
+          content: z
+            .array(z.object({ type: z.string(), text: z.string().optional() }).passthrough())
+            .optional(),
+        })
+        .passthrough(),
+    ),
   })
   .passthrough();
 
 function generatedText(payload: unknown): string {
-  const parsed = GenerateContentResponseSchema.safeParse(payload);
+  const parsed = StructuredInteractionResponseSchema.safeParse(payload);
   if (!parsed.success) {
     throw new GeminiProviderError("Gemini returned an invalid structured-output response.");
   }
+  if (parsed.data.status !== "completed") {
+    throw new GeminiProviderError(
+      `Gemini returned status ${parsed.data.status}; expected completed.`,
+    );
+  }
 
-  const text = parsed.data.candidates[0]?.content.parts
+  const text = (parsed.data.output_text ?? parsed.data.steps
+    .filter((step) => step.type === "model_output")
+    .flatMap((step) => step.content ?? [])
     .map((part) => part.text ?? "")
     .join("")
-    .trim();
+  ).trim();
   if (!text) throw new GeminiProviderError("Gemini returned an empty structured-output response.");
   return text;
 }
@@ -252,15 +258,14 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Gemin
             "x-goog-api-key": apiKey,
           },
           body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: request.input }] }],
-            systemInstruction: { parts: [{ text: request.systemInstruction }] },
-            generationConfig: {
-              responseFormat: {
-                text: {
-                  mimeType: "application/json",
-                  schema: request.schema,
-                },
-              },
+            model: MODEL_ID,
+            store: false,
+            input: request.input,
+            system_instruction: request.systemInstruction,
+            response_format: {
+              type: "text",
+              mime_type: "application/json",
+              schema: request.schema,
             },
           }),
           signal: request.signal,
