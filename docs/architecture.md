@@ -54,7 +54,7 @@ Google Search citations and weather attribution are converted to `SourceRecord` 
 
 ### 4. Composition
 
-A separate Gemini interaction receives the user request, semantic client context, evidence summary, normalized weather evidence, and source records. It has no tools and must return JSON matching the catalog's `SurfaceSpec` schema. This keeps retrieval/tool use separate from final structured composition.
+A separate Gemini interaction receives the user request, semantic client context, evidence summary, normalized weather evidence, and source records. It has no retrieval or action tools; its only available function is the declarative `emit_surface_spec` schema adapter. The returned arguments must match the catalog's `SurfaceSpec` schema. This keeps retrieval/tool use separate from final structured composition while avoiding dependence on the Interactions API response-format transport.
 
 The validator rejects:
 

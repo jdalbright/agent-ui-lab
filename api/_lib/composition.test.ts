@@ -104,7 +104,7 @@ describe("composeSurfaceSpec", () => {
     expect(timeline?.properties?.items?.items?.required).not.toContain("sourceId");
   });
 
-  it("uses a separate no-tools structured-output composition call", async () => {
+  it("uses a separate declarative schema-emission composition call", async () => {
     const { client, requests } = fakeClient([response(validSpec)]);
 
     const result = await composeSurfaceSpec({
