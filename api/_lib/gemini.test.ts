@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import searchFixture from "../_fixtures/gemini-search-grounding.json" with { type: "json" };
 import type { ClientContext, SourceRecord } from "../../shared/schemas.js";
 import {
-  createGeminiProvider,
   GeminiProviderError,
   GeminiToolRoundLimitError,
   type GeminiClient,
@@ -50,85 +49,6 @@ function functionCallResponse(id: string, signature: string): GeminiInteraction 
     ],
   };
 }
-
-describe("createGeminiProvider", () => {
-  it("uses the documented no-tools responseFormat request without putting the key in the URL", async () => {
-    const fetchImpl = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () =>
-          Promise.resolve({
-            status: "completed",
-            output_text: '{"label":"ready"}',
-            steps: [],
-          }),
-      } as Response),
-    ) as unknown as typeof fetch;
-    const provider = createGeminiProvider({ apiKey: "unit-test-key", fetchImpl });
-
-    const output = await provider.structuredOutput?.generate({
-      input: "Return a short label.",
-      systemInstruction: "Return only the requested JSON.",
-      schema: {
-        type: "object",
-        properties: { label: { type: "string" } },
-        required: ["label"],
-        additionalProperties: false,
-      },
-    });
-
-    expect(output).toEqual({ text: '{"label":"ready"}' });
-    expect(fetchImpl).toHaveBeenCalledOnce();
-    const [url, init] = vi.mocked(fetchImpl).mock.calls[0] ?? [];
-    expect(typeof url).toBe("string");
-    if (typeof url !== "string") throw new TypeError("Expected a string provider URL.");
-    expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/interactions",
-    );
-    expect(url).not.toContain("unit-test-key");
-    expect(new Headers(init?.headers).get("x-goog-api-key")).toBe("unit-test-key");
-    expect(typeof init?.body).toBe("string");
-    if (typeof init?.body !== "string") throw new TypeError("Expected a JSON request body.");
-    expect(JSON.parse(init.body) as unknown).toEqual({
-      model: "gemini-3.6-flash",
-      store: false,
-      input: "Return a short label.",
-      system_instruction: "Return only the requested JSON.",
-      response_format: {
-        type: "text",
-        mime_type: "application/json",
-        schema: {
-          type: "object",
-          properties: { label: { type: "string" } },
-          required: ["label"],
-          additionalProperties: false,
-        },
-      },
-    });
-  });
-
-  it("reduces provider error bodies to a privacy-safe category", async () => {
-    const fetchImpl = vi.fn(() =>
-      Promise.resolve({
-        ok: false,
-        status: 400,
-        text: () => Promise.resolve("Invalid responseFormat schema: schema is too complex"),
-      } as Response),
-    ) as unknown as typeof fetch;
-    const provider = createGeminiProvider({ apiKey: "unit-test-key", fetchImpl });
-
-    await expect(
-      provider.structuredOutput?.generate({
-        input: "Return JSON.",
-        systemInstruction: "Return JSON.",
-        schema: { type: "object" },
-      }),
-    ).rejects.toMatchObject({
-      providerCode: "PROVIDER_RESPONSE_FORMAT",
-    });
-  });
-});
 
 describe("runGeminiRetrieval", () => {
   it("replays every signed step unchanged before the matching function result", async () => {

@@ -24,7 +24,6 @@ import { geocodeLocations, reverseGeocodeLocation } from "./_lib/geocoding.js";
 import {
   createGeminiProvider,
   GeminiProviderError,
-  GeminiStructuredOutputError,
   runGeminiRetrieval,
   type GetWeatherBundleArguments,
 } from "./_lib/gemini.js";
@@ -466,12 +465,7 @@ export default async function handler(request: ServerRequest, response: ServerRe
       requestId: agentRequest.requestId,
       stage: "complete",
       durationMs: Date.now() - startedAt,
-      errorCode:
-        error instanceof GeminiStructuredOutputError
-          ? error.providerCode
-          : providerError
-            ? "PROVIDER_ERROR"
-            : code,
+      errorCode: providerError ? "PROVIDER_ERROR" : code,
     });
 
     if (!timedOut) {
