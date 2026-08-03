@@ -31,6 +31,31 @@ async function* recordedFixtureStream(request: AgentRequest): AsyncGenerator<Str
   const at = () => new Date().toISOString();
   const componentNames = selected.spec.components.map((node) => node.component);
   const sourceIds = selected.sources.map((source) => source.id);
+  const root = selected.spec.components.find((node) => node.id === selected.spec.rootId);
+  const presentationTrace: Partial<TraceRecord> = root?.component === "SurfaceFrame"
+    ? {
+        recipeId: root.recipeId,
+        density: root.density,
+        emphasis: root.emphasis,
+      }
+    : {};
+  const completedQualityTrace: Partial<TraceRecord> = root?.component === "SurfaceFrame"
+    ? {
+        ...presentationTrace,
+        qualityChecks: [
+          { code: "recipe_fit", passed: true },
+          { code: "answer_first", passed: true },
+          { code: "sources_last", passed: true },
+          { code: "requested_coverage", passed: true },
+          { code: "duplicate_primary", passed: true },
+          { code: "chart_table_alignment", passed: true },
+          { code: "citation_coverage", passed: true },
+          { code: "content_budget", passed: true },
+        ],
+        repairCategory: "none",
+        compilerResult: "compiled",
+      }
+    : {};
   const trace = (entry: TraceRecord): StreamEvent => ({ type: "trace", trace: entry });
 
   yield { type: "status", stage: "accepted", message: "Request received", at: at() };
@@ -39,24 +64,38 @@ async function* recordedFixtureStream(request: AgentRequest): AsyncGenerator<Str
 
   yield { type: "status", stage: "retrieving", message: "Retrieving trusted context", at: at() };
   if (selected.sources.length > 0) {
+    const usesSearch = selected.sources.some((source) => source.provider === "google-search");
     yield trace({
       id: "demo-tool",
       stage: "tool",
-      label: selected.spec.kind === "research" ? "Ground with Google Search" : "Get weather bundle",
+      label: usesSearch ? "Ground with Google Search" : "Get weather bundle",
       status: "complete",
       durationMs: 218,
-      toolName: selected.spec.kind === "research" ? "google_search" : "get_weather_bundle",
-      arguments:
-        selected.spec.kind === "research" ? { query: "Gemini 3.6 Flash changes" } : { locations: "Raleigh, NC", units: "imperial" },
+      toolName: usesSearch ? "google_search" : "get_weather_bundle",
+      arguments: usesSearch
+        ? { query: "official-source research" }
+        : { locations: "recorded-location-set", units: request.client.units },
       sourceIds,
     });
   }
   await pause();
 
   yield { type: "status", stage: "composing", message: "Composing the interface", at: at() };
-  yield trace({ id: "demo-compose", stage: "composition", label: "Compose interface", status: "complete", durationMs: 184 });
+  yield trace({
+    id: "demo-compose",
+    stage: "composition",
+    label: "Select presentation recipe",
+    status: "complete",
+    durationMs: 184,
+    ...presentationTrace,
+  });
   await pause();
 
+  const messages = compileSurfaceSpec({
+    surfaceId: `answer-${request.requestId}`,
+    spec: selected.spec,
+    sources: selected.sources,
+  });
   yield { type: "status", stage: "validating", message: "Validating trusted components", at: at() };
   yield trace({
     id: "demo-validation",
@@ -66,13 +105,9 @@ async function* recordedFixtureStream(request: AgentRequest): AsyncGenerator<Str
     durationMs: 12,
     componentNames,
     validation: { valid: true, repairCount: 0, issues: [] },
+    ...completedQualityTrace,
   });
 
-  const messages = compileSurfaceSpec({
-    surfaceId: `answer-${request.requestId}`,
-    spec: selected.spec,
-    sources: selected.sources,
-  });
   for (const message of messages) {
     await pause();
     yield { type: "a2ui", message };
