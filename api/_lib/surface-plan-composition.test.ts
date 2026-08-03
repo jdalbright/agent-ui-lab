@@ -269,4 +269,27 @@ describe("composeSurfacePlan", () => {
       /current result|supporting evidence|primary documentation|independent analysis/i,
     );
   });
+
+  it("fails closed when the deterministic fallback cannot be compiled safely", async () => {
+    const { client } = fakeClient([validPlan, validPlan]);
+    const emptyRetrieval: GeminiRetrievalResult = {
+      outputText: "Untrusted generated fallback text.",
+      sources: Object.freeze([]),
+      steps: Object.freeze([]),
+      evidence: Object.freeze([]),
+      toolRounds: 0,
+    };
+
+    await expect(
+      composeSurfacePlan!({
+        gemini: client,
+        prompt: "Compare the current result with the previous result.",
+        clientContext,
+        retrieval: emptyRetrieval,
+      }),
+    ).rejects.toMatchObject({
+      name: "CompositionValidationError",
+      issues: ["The deterministic domain fallback could not be compiled safely."],
+    });
+  });
 });

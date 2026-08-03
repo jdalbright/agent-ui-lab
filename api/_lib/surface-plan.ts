@@ -471,6 +471,8 @@ const weatherAlertSchema = z
     severity: z.enum(["minor", "moderate", "severe", "extreme", "unknown"]),
     sourceName: boundedOptionalText(160),
     sourceAuthorityUri: z.string().url().optional(),
+    startsAt: z.string().min(1).max(80).optional(),
+    expiresAt: z.string().min(1).max(80).optional(),
   })
   .passthrough();
 
@@ -488,6 +490,7 @@ const activityWindowSchema = z
   .object({
     location: weatherLocationSchema,
     activity: boundedOptionalText(80),
+    durationHours: z.number().int().min(1).max(6).optional(),
     startTime: z.string().min(1).max(80),
     endTime: z.string().min(1).max(80),
     label: boundedText(80),
@@ -728,7 +731,8 @@ function expectedRecipeForPrompt(
         (/\bweekend\b/.test(normalized) ||
           /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.+\b(?:and|through|to|versus|vs\.?)\b.+\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(
             normalized,
-          )))
+          ) ||
+          /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*[-–]\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(normalized)))
     ) {
       return "comparison.trend";
     }
@@ -755,9 +759,9 @@ function expectedRecipeForPrompt(
 
 function extractRequestedCriteria(prompt: string): string[] {
   const normalized = prompt.toLocaleLowerCase("en-US");
-  const explicit = normalized.match(
-    /(?:criteria(?:\s+(?:are|of))?|compare(?:d)?\s+(?:on|by|across)|\bacross)\s*[:-]?\s*([^?.]+)/,
-  )?.[1];
+  const explicit =
+    normalized.match(/(?:criteria(?:\s+(?:are|of))?)\s*[:-]?\s*([^?.]+)/)?.[1] ??
+    normalized.match(/(?:^|\s)(?:on|by|across)\s+([^?.]+)/)?.[1];
   const criteriaText = explicit?.replace(
     /\b(?:then\s+)?(?:and\s+)?(?:tell me|which|recommend|choose|decide)\b.*$/,
     "",
@@ -826,6 +830,13 @@ function requestedRange(prompt: string | undefined, unit: "hour" | "day"): numbe
 function requestedDayCount(prompt: string | undefined, state: WeatherState): number | undefined {
   const direct = requestedRange(prompt, "day");
   if (direct || !prompt || state.locations.length === 0) return direct;
+  if (
+    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:through|to|[-–])\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(
+      prompt,
+    )
+  ) {
+    return undefined;
+  }
   const weekday = /\b(?:through|until)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.exec(
     prompt,
   )?.[1]?.toLocaleLowerCase("en-US");
@@ -856,6 +867,18 @@ function requestedSpecificDayIndexes(
     "saturday",
   ] as const;
   const requested = new Set<string>();
+  const range = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:through|to|[-–])\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.exec(
+    normalized,
+  );
+  if (range) {
+    let index = weekdayNames.indexOf(range[1] as (typeof weekdayNames)[number]);
+    const end = weekdayNames.indexOf(range[2] as (typeof weekdayNames)[number]);
+    for (let count = 0; count < weekdayNames.length; count += 1) {
+      requested.add(weekdayNames[index]);
+      if (index === end) break;
+      index = (index + 1) % weekdayNames.length;
+    }
+  }
   const pair = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.+\b(?:and|versus|vs\.?)\b.+\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.exec(
     normalized,
   );
@@ -990,6 +1013,323 @@ function activityRecommendationCoverageIssues(
   return issues;
 }
 
+interface WeatherNarrativeField {
+  text: string;
+  policy: "sanitize-hero" | "validate-weather" | "validate-comparison";
+  locationIndex?: number;
+}
+
+function weatherNarrativeFields(plan: SurfacePlan): WeatherNarrativeField[] {
+  const fields: WeatherNarrativeField[] = [];
+  for (const module of plan.modules) {
+    if (module.type === "sources") {
+      fields.push({
+        text: module.label,
+        policy: plan.kind === "comparison" ? "validate-comparison" : "validate-weather",
+      });
+      continue;
+    }
+    if (plan.kind === "weather") {
+      if (module.type === "hero") {
+        fields.push(
+          {
+            text: module.recommendationLabel,
+            policy: "sanitize-hero",
+            locationIndex: module.locationIndex,
+          },
+          {
+            text: module.recommendationValue,
+            policy: "sanitize-hero",
+            locationIndex: module.locationIndex,
+          },
+          {
+            text: module.recommendationDetail,
+            policy: "sanitize-hero",
+            locationIndex: module.locationIndex,
+          },
+        );
+      } else if (module.type === "hourly" || module.type === "daily") {
+        fields.push({
+          text: module.label,
+          policy: "validate-weather",
+          locationIndex: module.locationIndex,
+        });
+      }
+      continue;
+    }
+    if (plan.kind === "comparison") {
+      if (module.type === "summary") {
+        fields.push(
+          { text: module.title, policy: "validate-comparison" },
+          { text: module.recommendation, policy: "validate-comparison" },
+        );
+      } else if (module.type === "table") {
+        fields.push({ text: module.caption, policy: "validate-comparison" });
+      } else if (module.type === "chart") {
+        fields.push({ text: module.title, policy: "validate-comparison" });
+      }
+    }
+  }
+  return fields;
+}
+
+function scopedWeatherLocations(
+  state: WeatherState,
+  locationIndex?: number,
+): WeatherLocationEvidence[] {
+  return locationIndex === undefined
+    ? state.locations
+    : state.locations[locationIndex]
+      ? [state.locations[locationIndex]]
+      : [];
+}
+
+function evidenceMeasurementNumbers(
+  state: WeatherState,
+  narrative: string,
+  token: string,
+  locationIndex?: number,
+): number[] {
+  const locations = scopedWeatherLocations(state, locationIndex);
+  const normalized = narrative.toLocaleLowerCase("en-US");
+  const values: number[] = [];
+  const temperatureUnit = /(?:°|degrees?)\s*([fc])\b/i.exec(token)?.[1]?.toLocaleUpperCase("en-US");
+  if (/(?:°|degrees?)/i.test(token)) {
+    for (const location of locations) {
+      if (temperatureUnit && location.current.temperatureUnit !== temperatureUnit) continue;
+      if (/\bfeels?(?: like)?\b/.test(normalized)) values.push(location.current.feelsLike);
+      else if (/\bhigh\b/.test(normalized)) values.push(...location.daily.map((day) => day.high));
+      else if (/\blow\b/.test(normalized)) values.push(...location.daily.map((day) => day.low));
+      else {
+        values.push(
+          location.current.temperature,
+          location.current.feelsLike,
+          ...location.hourly.map((hour) => hour.temperature),
+          ...location.daily.flatMap((day) => [day.high, day.low]),
+        );
+      }
+    }
+    return values;
+  }
+
+  if (/%/.test(token)) {
+    for (const location of locations) {
+      if (/\bhumid(?:ity)?\b/.test(normalized)) values.push(location.current.humidity);
+      else if (/\b(?:precipitation|rain|storm|shower)\b/.test(normalized)) {
+        values.push(
+          location.current.precipitationProbability,
+          ...location.hourly.flatMap((hour) =>
+            hour.precipitationProbability === null ? [] : [hour.precipitationProbability]
+          ),
+          ...location.daily.map((day) => day.precipitationProbability),
+        );
+      } else {
+        values.push(
+          location.current.humidity,
+          location.current.precipitationProbability,
+          ...location.hourly.flatMap((hour) =>
+            hour.precipitationProbability === null ? [] : [hour.precipitationProbability]
+          ),
+          ...location.daily.map((day) => day.precipitationProbability),
+        );
+      }
+    }
+    return values;
+  }
+
+  if (/mph\b|km\/h\b/i.test(token)) {
+    const unit = /mph\b/i.test(token) ? "mph" : "km/h";
+    return locations
+      .filter((location) => location.current.windSpeedUnit === unit)
+      .map((location) => location.current.windSpeed);
+  }
+  if (/mi\b|km\b/i.test(token)) {
+    const unit = /mi\b/i.test(token) ? "mi" : "km";
+    return locations
+      .filter((location) => location.current.visibilityUnit === unit)
+      .map((location) => location.current.visibility);
+  }
+  return values;
+}
+
+function evidenceLocalTimes(state: WeatherState, locationIndex?: number): number[] {
+  const values: number[] = [];
+  const add = (timestamp: string | undefined, timeZone: string): void => {
+    if (!timestamp) return;
+    const local = localWindowParts(timestamp, timeZone);
+    if (local) values.push(local.minutes);
+  };
+  const locations = scopedWeatherLocations(state, locationIndex);
+  for (const location of locations) {
+    add(location.current.observedAt, location.current.timeZone);
+    for (const hour of location.hourly) add(hour.startTime, location.current.timeZone);
+    for (const alert of location.alerts) {
+      add(alert.startsAt, location.current.timeZone);
+      add(alert.expiresAt, location.current.timeZone);
+    }
+  }
+  for (const window of state.activityWindows) {
+    const location = locations.find((candidate) => locationsMatch(candidate.location, window.location));
+    if (!location) continue;
+    add(window.startTime, location.current.timeZone);
+    add(window.endTime, location.current.timeZone);
+  }
+  return values;
+}
+
+const WEATHER_QUANTITATIVE_TOKEN_SOURCE = String.raw`\b\d{1,2}:[0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?\b|-?\d+(?:\.\d+)?\s*(?:°\s*[fc]?|degrees?\s*[fc]?|%|mph\b|km\/h\b|mi\b|km\b)|-?\d+(?:\.\d+)?\s*[- ](?:hours?|days?|locations?|cities?)\b|-?\d+(?:\.\d+)?`;
+
+function quantitativeTokens(value: string): string[] {
+  return [...value.matchAll(new RegExp(WEATHER_QUANTITATIVE_TOKEN_SOURCE, "gi"))].map(
+    (match) => match[0],
+  );
+}
+
+function normalizedQuantitativeToken(value: string): string {
+  return value
+    .toLocaleLowerCase("en-US")
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function trustedWeatherNarrativeTokens(state: WeatherState, locationIndex?: number): Set<string> {
+  const trustedText: string[] = [];
+  const locations = locationIndex === undefined
+    ? state.locations
+    : state.locations[locationIndex]
+      ? [state.locations[locationIndex]]
+      : [];
+  for (const location of locations) {
+    for (const alert of location.alerts) trustedText.push(alert.title, alert.description);
+  }
+  for (const window of state.activityWindows) {
+    if (
+      locationIndex !== undefined &&
+      !locations.some((location) => locationsMatch(location.location, window.location))
+    ) {
+      continue;
+    }
+    trustedText.push(window.label, window.detail);
+  }
+  return new Set(
+    trustedText.flatMap(quantitativeTokens).map(normalizedQuantitativeToken),
+  );
+}
+
+function weatherNarrativeFieldIssues(
+  field: WeatherNarrativeField,
+  state: WeatherState,
+  counts: ReadonlySet<number>,
+): string[] {
+  const localTimes = new Set(evidenceLocalTimes(state, field.locationIndex));
+  const trustedTokens = trustedWeatherNarrativeTokens(state, field.locationIndex);
+  const issues: string[] = [];
+
+  for (const token of quantitativeTokens(field.text)) {
+    const number = Number.parseFloat(token);
+    if (/\b(?:hours?|days?|locations?|cities?)\b/i.test(token)) {
+      if (!counts.has(number)) {
+        issues.push(`Weather narrative contains an unsupported range claim: ${token}.`);
+      }
+      continue;
+    }
+
+    if (field.policy === "validate-comparison") {
+      if (/(?:°|degrees?|%|mph\b|km\/h\b|mi\b|km\b)/i.test(token)) {
+        issues.push(`Weather comparison narrative contains a model-authored measurement: ${token}.`);
+      } else if (/^\d{1,2}:[0-5]\d/i.test(token.trim())) {
+        issues.push(`Weather comparison narrative contains a model-authored time: ${token}.`);
+      } else {
+        issues.push(`Weather comparison narrative contains an ungrounded numeric claim: ${token}.`);
+      }
+      continue;
+    }
+
+    if (trustedTokens.has(normalizedQuantitativeToken(token))) continue;
+    const time = /^(\d{1,2}):([0-5]\d)\s*(a\.?m\.?|p\.?m\.?)?$/i.exec(token.trim());
+    if (time) {
+      let hour = Number(time[1]);
+      if (time[3]) {
+        hour %= 12;
+        if (time[3].toLocaleLowerCase("en-US").startsWith("p")) hour += 12;
+      }
+      const minutes = hour * 60 + Number(time[2]);
+      if (!localTimes.has(minutes)) {
+        issues.push(`Weather narrative contains an unsupported time claim: ${token}.`);
+      }
+      continue;
+    }
+
+    if (/(?:°|degrees?|%|mph\b|km\/h\b|mi\b|km\b)/i.test(token)) {
+      const measurementNumbers = evidenceMeasurementNumbers(
+        state,
+        field.text,
+        token,
+        field.locationIndex,
+      );
+      if (!measurementNumbers.some((value) => Math.abs(value - number) < 0.000_001)) {
+        issues.push(`Weather narrative contains an unsupported measurement claim: ${token}.`);
+      }
+      continue;
+    }
+    issues.push(`Weather narrative contains an ungrounded numeric claim: ${token}.`);
+  }
+  return issues;
+}
+
+function weatherNarrativeIssues(plan: SurfacePlan, state: WeatherState): string[] {
+  if (state.locations.length === 0 || (plan.kind !== "weather" && plan.kind !== "comparison")) {
+    return [];
+  }
+  const issues: string[] = [];
+  const counts = new Set<number>([state.locations.length]);
+  for (const module of plan.modules) {
+    if (module.type === "hourly") counts.add(module.hourIndexes.length);
+    else if (module.type === "daily") counts.add(module.dayIndexes.length);
+    else if (module.type === "recommendation" && "activityWindowIndex" in module) {
+      const window = state.activityWindows[module.activityWindowIndex];
+      if (window?.durationHours) counts.add(window.durationHours);
+    } else if (
+      (isWeatherComparisonTable(module) || isWeatherComparisonChart(module)) &&
+      module.forecastIndexes
+    ) {
+      counts.add(module.forecastIndexes.length);
+    }
+  }
+
+  for (const field of weatherNarrativeFields(plan)) {
+    if (field.policy === "sanitize-hero") continue;
+    issues.push(...weatherNarrativeFieldIssues(field, state, counts));
+  }
+  return issues;
+}
+
+function safeWeatherHeroNarrative(
+  value: string,
+  fallback: string,
+  locationIndex: number,
+  state: WeatherState,
+  plan: SurfacePlan,
+): string {
+  if (quantitativeTokens(value).length === 0) return value;
+  const counts = new Set<number>([state.locations.length]);
+  for (const module of plan.modules) {
+    if (module.type === "hourly") counts.add(module.hourIndexes.length);
+    else if (module.type === "daily") counts.add(module.dayIndexes.length);
+    else if (module.type === "recommendation" && "activityWindowIndex" in module) {
+      const window = state.activityWindows[module.activityWindowIndex];
+      if (window?.durationHours) counts.add(window.durationHours);
+    }
+  }
+  const issues = weatherNarrativeFieldIssues(
+    { text: value, policy: "validate-weather", locationIndex },
+    state,
+    counts,
+  );
+  return issues.length === 0 ? value : fallback;
+}
+
 function includesInitialRange(indexes: readonly number[], count: number): boolean {
   const values = new Set(indexes);
   for (let index = 0; index < count; index += 1) {
@@ -1065,6 +1405,22 @@ function estimatedCompiledNodeCount(plan: SurfacePlan): number {
   return count;
 }
 
+function alignedForecastIndex(
+  anchor: WeatherLocationEvidence,
+  location: WeatherLocationEvidence,
+  forecastKind: "hourly" | "daily",
+  anchorIndex: number,
+): number {
+  if (forecastKind === "hourly") {
+    const timestamp = anchor.hourly[anchorIndex]?.startTime;
+    return timestamp
+      ? location.hourly.findIndex((item) => item.startTime === timestamp)
+      : -1;
+  }
+  const date = anchor.daily[anchorIndex]?.date;
+  return date ? location.daily.findIndex((item) => item.date === date) : -1;
+}
+
 function validateWeatherForecastReferences(
   module: WeatherComparisonTableModule | WeatherComparisonChartModule,
   state: WeatherState,
@@ -1078,13 +1434,22 @@ function validateWeatherForecastReferences(
   if (!module.metric || !allowedMetrics.has(module.metric)) {
     issues.push(`${module.forecastKind} weather comparisons cannot reference metric ${module.metric ?? "none"}.`);
   }
+  const anchor = state.locations[module.locationIndexes[0]];
+  if (!anchor) return;
   for (const locationIndex of module.locationIndexes) {
     const location = state.locations[locationIndex];
     if (!location) continue;
     for (const index of indexes) {
-      const forecast = module.forecastKind === "hourly" ? location.hourly[index] : location.daily[index];
+      const alignedIndex = alignedForecastIndex(anchor, location, module.forecastKind, index);
+      const forecast = alignedIndex < 0
+        ? undefined
+        : module.forecastKind === "hourly"
+          ? location.hourly[alignedIndex]
+          : location.daily[alignedIndex];
       if (!forecast) {
-        issues.push(`${module.forecastKind} comparison evidence index ${index} is out of range.`);
+        issues.push(
+          `${module.forecastKind} comparison evidence index ${index} has no date-aligned record for location ${locationIndex}.`,
+        );
       } else if (
         module.metric === "precipitation" &&
         module.forecastKind === "hourly" &&
@@ -1186,6 +1551,77 @@ function validateRequestedSpecificDays(
   }
 }
 
+function normalizeLocationLabel(value: string): string {
+  return value
+    .toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function requestedPromptLocations(prompt: string | undefined): string[] {
+  if (!prompt) return [];
+  const segments: string[] = [];
+  const score = /\b(?:score|rank)\s+(.+?)\s+(?:for|on|by|across|using)\b/i.exec(prompt)?.[1];
+  if (score) segments.push(score);
+  const chart = /\bchart\b.+?\bfor\s+(.+?)(?:\s+(?:on|this|next|over)\b|[?.]|$)/i.exec(prompt)?.[1];
+  if (chart) segments.push(chart);
+  const compare = /\bcompare\s+(.+?)(?:\s+(?:for|on|this|next|over|across)\b|[?.]|$)/i.exec(prompt)?.[1];
+  if (compare) segments.push(compare.replace(/^.*\bin\s+/i, ""));
+
+  const locations = segments.flatMap((segment) =>
+    segment.split(/,|\band\b/i).map((part) =>
+      part
+        .replace(/^\s*(?:the|a|an)\s+/i, "")
+        .replace(
+          /\s+(?:weather|temperatures?|conditions?|forecasts?|highs?|lows?|rain(?:fall)?|snow(?:fall)?)(?:\s+.*)?$/i,
+          "",
+        )
+        .trim(),
+    ),
+  );
+  return [...new Set(locations.filter((value) => /^[A-Za-z][A-Za-z .'-]{1,79}$/.test(value)))];
+}
+
+function evidenceLocationIndex(state: WeatherState, requested: string): number {
+  const normalizedRequested = normalizeLocationLabel(requested);
+  const requestedCity = normalizedRequested.split(" ")[0] ?? normalizedRequested;
+  return state.locations.findIndex((location) => {
+    const normalizedEvidence = normalizeLocationLabel(location.location.name);
+    const evidenceCity = normalizedEvidence.split(" ")[0] ?? normalizedEvidence;
+    return (
+      normalizedEvidence.includes(normalizedRequested) ||
+      normalizedRequested.includes(normalizedEvidence) ||
+      evidenceCity === requestedCity
+    );
+  });
+}
+
+function requestedLocationCoverageIssues(
+  plan: SurfacePlan,
+  context: SurfacePlanValidationContext,
+  state: WeatherState,
+): string[] {
+  if (state.locations.length === 0) return [];
+  const requested = new Set<string>(requestedPromptLocations(context.prompt));
+  for (const record of context.evidence) {
+    for (const location of [record.arguments.location, ...(record.arguments.locations ?? [])]) {
+      if (location) requested.add(location);
+    }
+  }
+  const coveredIndexes = new Set(referencedLocationIndexes(plan));
+  const issues: string[] = [];
+  for (const label of requested) {
+    const index = evidenceLocationIndex(state, label);
+    if (index < 0) {
+      issues.push(`Requested weather location is missing from evidence: ${label}.`);
+    } else if (!coveredIndexes.has(index)) {
+      issues.push(`Requested weather location is missing from the surface: ${label}.`);
+    }
+  }
+  return issues;
+}
+
 function requestedCoverageIssues(
   plan: SurfacePlan,
   context: SurfacePlanValidationContext,
@@ -1197,6 +1633,7 @@ function requestedCoverageIssues(
   for (const index of requestedLocations) {
     if (!coveredLocations.has(index)) issues.push(`Requested weather location index ${index} is not covered.`);
   }
+  issues.push(...requestedLocationCoverageIssues(plan, context, state));
 
   const expectedUnit = /\b(celsius|metric|°c)\b/i.test(context.prompt ?? "")
     ? "C"
@@ -1572,6 +2009,7 @@ export function validateSurfacePlan(
     }
   }
 
+  issues.push(...weatherNarrativeIssues(plan, state));
   issues.push(...requestedCoverageIssues(plan, context, state));
 
   return issues.length > 0
@@ -1768,6 +2206,18 @@ function weatherForecastValue(
   throw new TypeError("Validated daily comparison metric is unavailable.");
 }
 
+function alignedWeatherForecastValue(
+  anchor: WeatherLocationEvidence,
+  location: WeatherLocationEvidence,
+  kind: "hourly" | "daily",
+  anchorIndex: number,
+  metric: z.infer<typeof weatherForecastMetricSchema>,
+): number {
+  const index = alignedForecastIndex(anchor, location, kind, anchorIndex);
+  if (index < 0) throw new TypeError("Validated date-aligned weather comparison evidence is unavailable.");
+  return weatherForecastValue(location, kind, index, metric);
+}
+
 function weatherForecastUnit(
   location: WeatherLocationEvidence,
   metric: z.infer<typeof weatherForecastMetricSchema>,
@@ -1856,6 +2306,27 @@ export function compileSurfacePlan({
       if (!location) throw new TypeError("Validated weather location is unavailable.");
 
       if (module.type === "hero") {
+        const safeLabel = safeWeatherHeroNarrative(
+          module.recommendationLabel,
+          "Current conditions",
+          module.locationIndex,
+          weatherState,
+          trustedPlan,
+        );
+        const safeValue = safeWeatherHeroNarrative(
+          module.recommendationValue,
+          location.current.conditionText,
+          module.locationIndex,
+          weatherState,
+          trustedPlan,
+        );
+        const safeDetail = safeWeatherHeroNarrative(
+          module.recommendationDetail,
+          `Provider-observed conditions for ${location.location.name}.`,
+          module.locationIndex,
+          weatherState,
+          trustedPlan,
+        );
         roots.push(baseId);
         body.push({
           id: baseId,
@@ -1870,9 +2341,9 @@ export function compileSurfacePlan({
           unit: location.current.temperatureUnit,
           condition: location.current.conditionText,
           conditionKey: location.current.conditionKey,
-          recommendationLabel: module.recommendationLabel,
-          recommendationValue: module.recommendationValue,
-          recommendationDetail: module.recommendationDetail,
+          recommendationLabel: safeLabel,
+          recommendationValue: safeValue,
+          recommendationDetail: safeDetail,
           variant: module.variant,
         });
         return;
@@ -2063,7 +2534,8 @@ export function compileSurfacePlan({
             rows: labels.map((label, labelIndex) => [
               label,
               ...locations.map((location) => {
-                const value = weatherForecastValue(
+                const value = alignedWeatherForecastValue(
+                  locations[0],
                   location,
                   forecastKind,
                   indexes[labelIndex],
@@ -2109,7 +2581,13 @@ export function compileSurfacePlan({
             series: locations.map((location) => ({
               label: location.location.name,
               values: module.forecastIndexes.map((index) =>
-                weatherForecastValue(location, module.forecastKind, index, module.metric),
+                alignedWeatherForecastValue(
+                  locations[0],
+                  location,
+                  module.forecastKind,
+                  index,
+                  module.metric,
+                ),
               ),
             })),
             unit: weatherForecastUnit(locations[0], module.metric),
@@ -2259,11 +2737,7 @@ export function buildFallbackSurfacePlan({
             type: "summary",
             variant: "verdict",
             title: "Weather comparison",
-            recommendation: limited(
-              retrieval.outputText,
-              400,
-              "The provider-observed conditions are shown side by side.",
-            ),
+            recommendation: "Provider-observed conditions are shown side by side without a generated winner.",
             locationIndexes,
             sourceIds,
           },

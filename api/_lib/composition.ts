@@ -1200,22 +1200,29 @@ export async function composeSurfacePlan({
     if (repairCount === 0) input = repairPlanCompositionInput(payload, validation);
   }
 
-  const fallbackPlan = SurfacePlanSchema.parse(
-    buildFallbackSurfacePlan({ kind, prompt, retrieval, clientContext }),
-  );
-  const fallbackChecks = planQualityChecks(fallbackPlan, prompt, retrieval, clientContext);
-  return {
-    plan: fallbackPlan,
-    spec: compileSurfacePlan({ plan: fallbackPlan, retrieval, clientContext }),
-    repairCount: 1,
-    fallbackUsed: true,
-    metadata: {
-      recipeId: fallbackPlan.recipeId,
-      density: fallbackPlan.density,
-      emphasis: fallbackPlan.emphasis,
-      qualityChecks: fallbackChecks,
-      repairCategory: firstFailure ? "semantic" : "none",
-      compilerResult: "deterministic-fallback",
-    },
-  };
+  try {
+    const fallbackPlan = SurfacePlanSchema.parse(
+      buildFallbackSurfacePlan({ kind, prompt, retrieval, clientContext }),
+    );
+    const fallbackSpec = compileSurfacePlan({ plan: fallbackPlan, retrieval, clientContext });
+    const fallbackChecks = planQualityChecks(fallbackPlan, prompt, retrieval, clientContext);
+    return {
+      plan: fallbackPlan,
+      spec: fallbackSpec,
+      repairCount: 1,
+      fallbackUsed: true,
+      metadata: {
+        recipeId: fallbackPlan.recipeId,
+        density: fallbackPlan.density,
+        emphasis: fallbackPlan.emphasis,
+        qualityChecks: fallbackChecks,
+        repairCategory: firstFailure ? "semantic" : "none",
+        compilerResult: "deterministic-fallback",
+      },
+    };
+  } catch {
+    throw new CompositionValidationError([
+      "The deterministic domain fallback could not be compiled safely.",
+    ]);
+  }
 }

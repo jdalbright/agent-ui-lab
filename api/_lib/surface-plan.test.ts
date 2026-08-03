@@ -825,6 +825,20 @@ describe("weather-backed comparison integrity", () => {
       expect(narrativeResult.issues.join(" ")).toMatch(/model-authored measurements/i);
     }
 
+    const narratedBareNumbers = structuredClone(plan);
+    const bareSummary = (narratedBareNumbers.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "summary",
+    );
+    bareSummary!.recommendation = "Raleigh reaches 9999 while Charlotte stays at 1.";
+    const bareNumberResult = validateSurfacePlan(narratedBareNumbers, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+    });
+    expect(bareNumberResult.success).toBe(false);
+    if (!bareNumberResult.success) {
+      expect(bareNumberResult.issues.join(" ")).toMatch(/ungrounded numeric claim/i);
+    }
+
     const parsed = SurfacePlanSchema.parse(plan);
     const spec = compileSurfacePlan({ plan: parsed, retrieval, clientContext });
     const compiledChart = spec.components.find((node) => node.component === "ComparisonChart");
@@ -838,9 +852,211 @@ describe("weather-backed comparison integrity", () => {
     });
     expect(JSON.stringify([compiledSummary, compiledTable, compiledChart])).not.toContain("9999");
   });
+
+  it("rejects a four-city plan when one prompt-requested city is absent from evidence", () => {
+    const { retrieval } = weatherComparisonFixture();
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations[1].location = {
+      name: "Durham, NC",
+      latitude: 35.994,
+      longitude: -78.8986,
+      placeId: "durham-place",
+    };
+    result.locations.push({
+      ...structuredClone(result.locations[1]),
+      location: {
+        name: "Charlotte, NC",
+        latitude: 35.2271,
+        longitude: -80.8431,
+        placeId: "charlotte-place",
+      },
+    });
+    (retrieval.evidence[0].arguments as { locations?: string[] }).locations = [
+      "Raleigh",
+      "Durham",
+      "Charlotte",
+      "Asheville",
+    ];
+    const sourceIds = retrieval.sources.map((source) => source.id);
+    const plan = {
+      kind: "comparison",
+      recipeId: "comparison.scorecard",
+      density: "detailed",
+      emphasis: "evidence",
+      modules: [
+        {
+          type: "summary",
+          variant: "balanced",
+          title: "Outdoor brunch weather scorecard",
+          recommendation: "Compare the provider-observed conditions for each available city.",
+          locationIndexes: [0, 1, 2],
+          sourceIds,
+        },
+        {
+          type: "table",
+          caption: "Current brunch conditions",
+          locationIndexes: [0, 1, 2],
+          forecastKind: "current",
+          metrics: ["temperature", "precipitation", "wind"],
+          sourceIds,
+        },
+        { type: "sources", label: "Weather sources", sourceIds },
+      ],
+    };
+
+    const validation = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt: "Score Raleigh, Durham, Charlotte, and Asheville for a Sunday outdoor brunch.",
+      clientContext,
+    });
+
+    expect(validation.success).toBe(false);
+    if (!validation.success) expect(validation.issues.join(" ")).toMatch(/Asheville/i);
+  });
+
+  it("rejects a Monday-to-Friday request represented by only two daily records", () => {
+    const { retrieval, plan } = weatherComparisonFixture();
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations.forEach((location, locationIndex) => {
+      location.daily = Array.from({ length: 7 }, (_, dayIndex) => ({
+        ...structuredClone(raleighWeather.daily[dayIndex % raleighWeather.daily.length]),
+        date: `2026-08-${String(dayIndex + 2).padStart(2, "0")}`,
+        high: 80 + locationIndex * 5 + dayIndex,
+      }));
+    });
+    for (const module of plan.modules as Array<Record<string, unknown>>) {
+      if (module.type === "chart" || module.type === "table") {
+        module.forecastKind = "daily";
+        module.forecastIndexes = [1, 2];
+        module.metric = "high";
+      }
+      if (module.type === "chart") module.title = "Weekday high trend";
+      if (module.type === "table") module.caption = "Weekday high data";
+    }
+
+    const validation = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt: "Compare Raleigh and Charlotte from Monday to Friday.",
+      clientContext,
+    });
+
+    expect(validation.success).toBe(false);
+    if (!validation.success) expect(validation.issues.join(" ")).toMatch(/named day index/i);
+  });
+
+  it("aligns daily comparison values by ISO date across provider time zones", () => {
+    const { retrieval, plan } = weatherComparisonFixture();
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    const tokyo = result.locations[0];
+    const honolulu = result.locations[1];
+    tokyo.location = {
+      name: "Tokyo, Japan",
+      latitude: 35.6762,
+      longitude: 139.6503,
+      placeId: "tokyo-place",
+    };
+    tokyo.current.timeZone = "Asia/Tokyo";
+    tokyo.daily = [
+      { ...structuredClone(raleighWeather.daily[0]), date: "2026-08-02", high: 90 },
+      { ...structuredClone(raleighWeather.daily[1]), date: "2026-08-03", high: 91 },
+    ];
+    honolulu.location = {
+      name: "Honolulu, HI",
+      latitude: 21.3099,
+      longitude: -157.8581,
+      placeId: "honolulu-place",
+    };
+    honolulu.current.timeZone = "Pacific/Honolulu";
+    honolulu.daily = [
+      { ...structuredClone(raleighWeather.daily[0]), date: "2026-08-01", high: 60 },
+      { ...structuredClone(raleighWeather.daily[0]), date: "2026-08-02", high: 70 },
+      { ...structuredClone(raleighWeather.daily[1]), date: "2026-08-03", high: 71 },
+    ];
+    delete (retrieval.evidence[0].arguments as { location?: string }).location;
+    (retrieval.evidence[0].arguments as { locations?: string[] }).locations = [
+      "Tokyo",
+      "Honolulu",
+    ];
+    for (const module of plan.modules as Array<Record<string, unknown>>) {
+      if (module.type === "chart" || module.type === "table") {
+        module.forecastKind = "daily";
+        module.forecastIndexes = [0, 1];
+        module.metric = "high";
+      }
+      if (module.type === "summary") {
+        module.title = "Tokyo and Honolulu outlook";
+        module.recommendation = "Compare the provider-observed daily highs.";
+      }
+      if (module.type === "chart") module.title = "Daily high trend";
+      if (module.type === "table") module.caption = "Daily high data";
+    }
+
+    const parsed = SurfacePlanSchema.parse(plan);
+    expect(
+      validateSurfacePlan(parsed, {
+        sources: retrieval.sources,
+        evidence: retrieval.evidence,
+      }),
+    ).toMatchObject({ success: true });
+    const spec = compileSurfacePlan({ plan: parsed, retrieval, clientContext });
+    expect(spec.components.find((node) => node.component === "ComparisonChart")).toMatchObject({
+      series: [
+        { label: "Tokyo, Japan", values: [90, 91] },
+        { label: "Honolulu, HI", values: [70, 71] },
+      ],
+    });
+    expect(spec.components.find((node) => node.component === "ComparisonTable")).toMatchObject({
+      rows: [
+        expect.arrayContaining(["90°F", "70°F"]),
+        expect.arrayContaining(["91°F", "71°F"]),
+      ],
+    });
+  });
+});
+
+describe("requested comparison coverage", () => {
+  it("rejects a scorecard that omits explicitly requested warranty and repairability criteria", () => {
+    const plan = structuredClone(plansByRecipe["comparison.scorecard"]);
+    const validation = validateSurfacePlan(plan, {
+      sources: searchSources,
+      evidence: [],
+      prompt: "Compare Framework A and Framework B on warranty length and repairability.",
+      clientContext,
+    });
+
+    expect(validation.success).toBe(false);
+    if (!validation.success) {
+      expect(validation.issues.join(" ")).toMatch(/warranty length|repairability/i);
+    }
+  });
 });
 
 describe("compileSurfacePlan", () => {
+  it("replaces an unsupported quantitative weather hero claim with trusted copy", () => {
+    const plan = structuredClone(plansByRecipe["weather.snapshot"]);
+    const hero = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "hero",
+    );
+    hero!.recommendationValue = "9999°F tomorrow";
+    hero!.recommendationDetail = "Expect 9999 degrees with a 1000 mph breeze.";
+
+    const spec = compileSurfacePlan({
+      plan: SurfacePlanSchema.parse(plan),
+      retrieval: weatherRetrieval,
+      clientContext,
+    });
+    const compiledHero = spec.components.find((node) => node.component === "WeatherHero");
+
+    expect(compiledHero).toMatchObject({
+      recommendationValue: "Partly cloudy",
+      recommendationDetail: "Provider-observed conditions for Raleigh, NC.",
+    });
+    expect(JSON.stringify(compiledHero)).not.toContain("9999");
+    expect(JSON.stringify(compiledHero)).not.toContain("1000");
+  });
+
   it("deterministically compiles semantic plan choices into a trusted SurfaceSpec", () => {
     const plan = SurfacePlanSchema.parse(
       structuredClone(plansByRecipe["weather.snapshot"]),
@@ -1002,6 +1218,7 @@ describe("compileSurfacePlan", () => {
 
   it("validates the requested activity and renders its window in the provider location timezone", () => {
     const cloned = structuredClone(weatherRetrieval);
+    (cloned.evidence[0].arguments as { location?: string }).location = "Denver, CO";
     const result = cloned.evidence[0].result as {
       locations: Array<typeof raleighWeather>;
       activityWindows: Array<{
@@ -1055,6 +1272,35 @@ describe("compileSurfacePlan", () => {
 });
 
 describe("domain-specific deterministic SurfacePlan fallbacks", () => {
+  it("never copies a generated weather-comparison claim into the deterministic fallback", () => {
+    const retrieval = structuredClone(weatherRetrieval);
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations.push({
+      ...structuredClone(raleighWeather),
+      location: {
+        name: "Durham, NC",
+        latitude: 35.994,
+        longitude: -78.8986,
+        placeId: "durham-place",
+      },
+    });
+    retrieval.outputText = "Raleigh reaches 9999 while Durham stays at 1.";
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "comparison",
+      prompt: "Compare Raleigh and Durham weather.",
+      retrieval,
+      clientContext,
+    });
+    const spec = compileSurfacePlan({ plan, retrieval, clientContext });
+
+    expect(JSON.stringify(plan)).not.toContain("9999");
+    expect(JSON.stringify(spec)).not.toContain("9999");
+    expect(JSON.stringify(plan)).toContain(
+      "Provider-observed conditions are shown side by side without a generated winner.",
+    );
+  });
+
   it.each([
     ["weather", "weather.snapshot", "WeatherHero"],
     ["comparison", "comparison.verdict", "ComparisonSummary"],
