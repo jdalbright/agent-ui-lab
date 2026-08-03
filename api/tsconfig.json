@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.api.tsbuildinfo",
+    "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.api.tsbuildinfo",
     "target": "ES2022",
     "lib": ["ES2022", "DOM"],
     "module": "NodeNext",
@@ -12,10 +12,10 @@
     "isolatedModules": true,
     "noEmit": true,
     "types": ["node", "vitest/globals"],
-    "baseUrl": ".",
+    "baseUrl": "..",
     "paths": {
       "@shared/*": ["shared/*"]
     }
   },
-  "include": ["api", "shared", "tests/api"]
+  "include": [".", "../shared", "../tests/api"]
 }
