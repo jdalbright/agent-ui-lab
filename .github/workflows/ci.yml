@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Release gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: true
+      RUN_LIVE_UI_EVALS: "false"
+      SURFACE_COMPOSER_VERSION: spec-v1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run unit and component tests
+        run: npm run test:unit
+
+      - name: Run safety evaluation
+        run: npm run eval
+
+      - name: Run semantic, accessibility, and screenshot UI-quality evaluation
+        run: npm run eval:ui
+
+      - name: Run remaining shell and interaction browser checks
+        run: npm run test:e2e:app
+
+      - name: Upload browser diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7

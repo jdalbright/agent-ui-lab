@@ -3,6 +3,10 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./test-results",
+  // Baselines are renderer fixtures, not operating-system fixtures. Keeping the
+  // path independent of project and platform lets the same committed image gate
+  // local macOS runs and Chromium on Ubuntu CI.
+  snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{ext}",
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:4173",
