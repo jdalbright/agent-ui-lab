@@ -1,6 +1,10 @@
 import { classifyCapability, type CapabilityDecision } from "./capability.js";
 import { createCapabilityBoundarySpec, createClarificationSpec } from "./capability-surfaces.js";
-import type { SourceRecord, SurfaceSpec } from "./schemas.js";
+import type {
+  SourceRecord,
+  SurfaceRecipeId,
+  SurfaceSpec,
+} from "./schemas.js";
 
 const ACCESSED_AT = "2026-08-01T14:42:00.000Z";
 
@@ -342,19 +346,11 @@ export const comparisonDemoSpec: SurfaceSpec = {
       density: "detailed",
       emphasis: "trend",
       children: [
-        "comparison-heading",
         "comparison-summary",
         "comparison-chart",
         "comparison-table",
         "comparison-sources",
       ],
-    },
-    {
-      id: "comparison-heading",
-      component: "EditorialHeading",
-      text: "Raleigh or Asheville this weekend?",
-      level: "h1",
-      align: "start",
     },
     {
       id: "comparison-summary",
@@ -371,7 +367,7 @@ export const comparisonDemoSpec: SurfaceSpec = {
       id: "comparison-chart",
       component: "ComparisonChart",
       variant: "line",
-      title: "Hourly temperature comparison",
+      title: "Saturday temperature comparison",
       labels: ["10 AM", "1 PM", "4 PM", "7 PM"],
       series: [
         { label: "Raleigh", values: [79, 85, 88, 82] },
@@ -382,11 +378,11 @@ export const comparisonDemoSpec: SurfaceSpec = {
     {
       id: "comparison-table",
       component: "ComparisonTable",
-      caption: "Weekend conditions",
-      columns: ["City", "Saturday", "Sunday", "Best window"],
+      caption: "Saturday temperature table alternative",
+      columns: ["City", "10 AM", "1 PM", "4 PM", "7 PM"],
       rows: [
-        ["Raleigh", "88° / 70°", "86° / 69°", "Sunday morning"],
-        ["Asheville", "80° / 62°", "78° / 61°", "Saturday evening"],
+        ["Raleigh", "79°F", "85°F", "88°F", "82°F"],
+        ["Asheville", "70°F", "77°F", "80°F", "74°F"],
       ],
     },
     {
@@ -796,6 +792,205 @@ export type DemoSurface = {
   spec: SurfaceSpec;
   sources: SourceRecord[];
 };
+
+const RECORDED_QUALITY_CHECK_CODES = [
+  "recipe_fit",
+  "answer_first",
+  "sources_last",
+  "duplicate_primary",
+  "chart_table_alignment",
+  "citation_coverage",
+] as const;
+
+export type RecordedQualityCheck = {
+  code: (typeof RECORDED_QUALITY_CHECK_CODES)[number];
+  passed: boolean;
+};
+
+const LAYOUT_COMPONENT_NAMES = new Set(["SurfaceFrame", "Band", "Split", "Rail", "Divider"]);
+const PRIMARY_COMPONENT_NAMES = new Set(["WeatherHero", "ComparisonSummary", "ResearchLead"]);
+const PRIMARY_BY_KIND: Readonly<Record<string, string>> = {
+  weather: "WeatherHero",
+  comparison: "ComparisonSummary",
+  research: "ResearchLead",
+};
+
+const RECORDED_RECIPE_EXPECTATIONS: Readonly<Record<SurfaceRecipeId, {
+  kind: "weather" | "comparison" | "research";
+  density: "brief" | "balanced" | "detailed";
+  emphasis: "answer" | "decision" | "trend" | "evidence" | "risk";
+  requiredComponents: readonly string[];
+}>> = {
+  "weather.snapshot": {
+    kind: "weather",
+    density: "brief",
+    emphasis: "answer",
+    requiredComponents: ["WeatherHero", "Rail", "SourceList"],
+  },
+  "weather.decision": {
+    kind: "weather",
+    density: "balanced",
+    emphasis: "decision",
+    requiredComponents: ["WeatherHero", "RecommendationBand", "HourlyForecast", "DailyForecast", "SourceList"],
+  },
+  "weather.outlook": {
+    kind: "weather",
+    density: "detailed",
+    emphasis: "trend",
+    requiredComponents: ["WeatherHero", "DailyForecast", "RecommendationBand", "SourceList"],
+  },
+  "comparison.verdict": {
+    kind: "comparison",
+    density: "balanced",
+    emphasis: "decision",
+    requiredComponents: ["ComparisonSummary", "ComparisonTable", "SourceList"],
+  },
+  "comparison.scorecard": {
+    kind: "comparison",
+    density: "detailed",
+    emphasis: "evidence",
+    requiredComponents: ["ComparisonSummary", "Rail", "ComparisonTable", "SourceList"],
+  },
+  "comparison.trend": {
+    kind: "comparison",
+    density: "detailed",
+    emphasis: "trend",
+    requiredComponents: ["ComparisonSummary", "ComparisonChart", "ComparisonTable", "SourceList"],
+  },
+  "research.brief": {
+    kind: "research",
+    density: "balanced",
+    emphasis: "evidence",
+    requiredComponents: ["ResearchLead", "EvidenceList", "Timeline", "SourceList"],
+  },
+  "research.timeline": {
+    kind: "research",
+    density: "detailed",
+    emphasis: "trend",
+    requiredComponents: ["ResearchLead", "Timeline", "SourceList"],
+  },
+  "research.claims": {
+    kind: "research",
+    density: "detailed",
+    emphasis: "evidence",
+    requiredComponents: ["ResearchLead", "EvidenceList", "SourceList"],
+  },
+};
+
+function readableRecordedNodes(spec: SurfaceSpec): SurfaceSpec["components"][number][] {
+  const nodes = new Map(spec.components.map((node) => [node.id, node]));
+  const readable: SurfaceSpec["components"][number][] = [];
+  const visited = new Set<string>();
+
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const node = nodes.get(id);
+    if (!node) return;
+    if (!LAYOUT_COMPONENT_NAMES.has(node.component)) readable.push(node);
+    if ("children" in node) node.children.forEach(visit);
+  };
+
+  visit(spec.rootId);
+  return readable;
+}
+
+function recordedRecipeFits(spec: SurfaceSpec): boolean {
+  const root = spec.components.find((node) => node.id === spec.rootId);
+  if (root?.component !== "SurfaceFrame") return false;
+  const expectation = RECORDED_RECIPE_EXPECTATIONS[root.recipeId];
+  const componentNames: ReadonlySet<string> = new Set(
+    spec.components.map((node) => node.component),
+  );
+  return expectation.kind === spec.kind
+    && root.density === expectation.density
+    && root.emphasis === expectation.emphasis
+    && expectation.requiredComponents.every((name) => componentNames.has(name));
+}
+
+function recordedChartTableAlign(spec: SurfaceSpec): boolean {
+  const chart = spec.components.find((node) => node.component === "ComparisonChart");
+  if (!chart || chart.component !== "ComparisonChart") return true;
+  const table = spec.components.find((node) => node.component === "ComparisonTable");
+  if (!table || table.component !== "ComparisonTable") return false;
+  if (table.columns.length !== chart.labels.length + 1) return false;
+  if (!chart.labels.every((label, index) => table.columns[index + 1] === label)) return false;
+  if (table.rows.length !== chart.series.length) return false;
+
+  return chart.series.every((series, seriesIndex) => {
+    const row = table.rows[seriesIndex];
+    if (!row || row[0] !== series.label || row.length !== series.values.length + 1) return false;
+    return series.values.every((value, valueIndex) => {
+      const cell = row[valueIndex + 1];
+      const numericCell = Number.parseFloat(cell?.replace(/[^0-9+-.]/g, "") ?? "");
+      return Number.isFinite(numericCell) && numericCell === value;
+    });
+  });
+}
+
+function collectRecordedCitationIds(value: unknown, output: Set<string>): void {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectRecordedCitationIds(item, output));
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  const record = value as Record<string, unknown>;
+  if (typeof record.sourceId === "string") output.add(record.sourceId);
+  if (Array.isArray(record.sourceIds)) {
+    record.sourceIds.forEach((sourceId) => {
+      if (typeof sourceId === "string") output.add(sourceId);
+    });
+  }
+  Object.entries(record).forEach(([key, item]) => {
+    if (key !== "sourceId" && key !== "sourceIds") collectRecordedCitationIds(item, output);
+  });
+}
+
+function recordedCitationsAreComplete(
+  spec: SurfaceSpec,
+  sources: readonly SourceRecord[],
+  readable: readonly SurfaceSpec["components"][number][],
+): boolean {
+  const sourceIds = new Set(sources.map((source) => source.id));
+  const sourceLists = readable.filter((node) => node.component === "SourceList");
+  if (sourceLists.length !== 1 || sourceLists[0]?.component !== "SourceList") return false;
+  const listedIds = new Set(sourceLists[0].sourceIds);
+  if (sourceIds.size !== listedIds.size || [...sourceIds].some((id) => !listedIds.has(id))) return false;
+
+  const citedIds = new Set<string>();
+  collectRecordedCitationIds(spec.components, citedIds);
+  if ([...citedIds].some((id) => !sourceIds.has(id) || !listedIds.has(id))) return false;
+
+  if (spec.kind !== "research") return true;
+  return spec.components
+    .filter((node) => node.component === "EvidenceList" || node.component === "Timeline")
+    .every((node) => node.items.every((item) => {
+      const sourceId = "sourceId" in item ? item.sourceId : undefined;
+      return typeof sourceId === "string" && sourceIds.has(sourceId) && listedIds.has(sourceId);
+    }));
+}
+
+/** Evaluate only facts that the recorded fixture itself can prove without the original prompt. */
+export function evaluateRecordedSurfaceQuality(
+  spec: SurfaceSpec,
+  sources: readonly SourceRecord[],
+): RecordedQualityCheck[] {
+  const readable = readableRecordedNodes(spec);
+  const readableNames = readable.map((node) => node.component);
+  const expectedPrimary = PRIMARY_BY_KIND[spec.kind];
+  const sourceIndexes = readableNames
+    .map((name, index) => name === "SourceList" ? index : -1)
+    .filter((index) => index >= 0);
+  const checks: Readonly<Record<RecordedQualityCheck["code"], boolean>> = {
+    recipe_fit: recordedRecipeFits(spec),
+    answer_first: typeof expectedPrimary === "string" && readableNames[0] === expectedPrimary,
+    sources_last: sourceIndexes.length === 1 && sourceIndexes[0] === readable.length - 1,
+    duplicate_primary: readableNames.filter((name) => PRIMARY_COMPONENT_NAMES.has(name)).length === 1,
+    chart_table_alignment: recordedChartTableAlign(spec),
+    citation_coverage: recordedCitationsAreComplete(spec, sources, readable),
+  };
+  return RECORDED_QUALITY_CHECK_CODES.map((code) => ({ code, passed: checks[code] }));
+}
 
 function normalizeShowcasePrompt(prompt: string): string {
   return prompt.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");

@@ -5,7 +5,10 @@ import {
   type PromptSuggestion,
 } from "../src/components/shell/promptSuggestions.js";
 import { TRUSTED_COMPONENT_NAMES } from "./constants.js";
-import { selectDemoSurface } from "./demo-surfaces.js";
+import {
+  evaluateRecordedSurfaceQuality,
+  selectDemoSurface,
+} from "./demo-surfaces.js";
 import {
   SurfaceRecipeIdSchema,
   TraceRecordSchema,
@@ -156,6 +159,74 @@ describe("Phase 2 deterministic showcase surfaces", () => {
       );
     },
   );
+
+  it("keeps the comparison trend answer-first and its chart aligned to the table alternative", () => {
+    const selected = selectDemoSurface("Compare this weekend’s weather in Raleigh and Asheville.");
+    const leaves = readableModules(selected.spec);
+    const checks = evaluateRecordedSurfaceQuality(selected.spec, selected.sources);
+
+    expect(leaves[0]?.component).toBe("ComparisonSummary");
+    expect(checks).toContainEqual({ code: "answer_first", passed: true });
+    expect(checks).toContainEqual({ code: "chart_table_alignment", passed: true });
+  });
+
+  it.each(SHOWCASE_PROMPTS)(
+    "$id evaluates only the six fixture-proven quality checks",
+    (suggestion) => {
+      const selected = selectDemoSurface(suggestion.prompt);
+      const checks = evaluateRecordedSurfaceQuality(selected.spec, selected.sources);
+
+      expect(checks.map(({ code }) => code)).toEqual([
+        "recipe_fit",
+        "answer_first",
+        "sources_last",
+        "duplicate_primary",
+        "chart_table_alignment",
+        "citation_coverage",
+      ]);
+      expect(checks.every(({ passed }) => passed), suggestion.id).toBe(true);
+    },
+  );
+
+  it("reports failures when recorded surface structure or evidence does not prove a check", () => {
+    const selected = selectDemoSurface("Compare this weekend’s weather in Raleigh and Asheville.");
+    const altered = structuredClone(selected.spec);
+    const root = rootNode(altered);
+    if (root.component !== "SurfaceFrame") throw new Error("Expected a SurfaceFrame root");
+
+    const summary = altered.components.find((node) => node.component === "ComparisonSummary");
+    const chart = altered.components.find((node) => node.component === "ComparisonChart");
+    const sourceList = altered.components.find((node) => node.component === "SourceList");
+    if (summary?.component !== "ComparisonSummary") throw new Error("Expected a comparison summary");
+    if (chart?.component !== "ComparisonChart") throw new Error("Expected a comparison chart");
+    if (sourceList?.component !== "SourceList") throw new Error("Expected a source list");
+
+    altered.components.push({
+      id: "decorative-heading",
+      component: "EditorialHeading",
+      text: "Decorative context",
+      level: "h2",
+      align: "start",
+    });
+    altered.components.push({ ...summary, id: "comparison-summary-duplicate" });
+    root.children = [
+      "decorative-heading",
+      ...root.children.filter((id) => id !== sourceList.id),
+      "comparison-summary-duplicate",
+    ];
+    root.recipeId = "research.brief";
+    chart.labels = [...chart.labels, "Extra range"];
+    sourceList.sourceIds = [];
+
+    expect(evaluateRecordedSurfaceQuality(altered, selected.sources)).toEqual([
+      { code: "recipe_fit", passed: false },
+      { code: "answer_first", passed: false },
+      { code: "sources_last", passed: false },
+      { code: "duplicate_primary", passed: false },
+      { code: "chart_table_alignment", passed: false },
+      { code: "citation_coverage", passed: false },
+    ]);
+  });
 
   it.each(SHOWCASE_PROMPTS)(
     "$id derives bounded public trace metadata from its recorded fixture",

@@ -6,7 +6,10 @@ import {
   type StreamEvent,
   type TraceRecord,
 } from "@shared/schemas";
-import { selectDemoSurface } from "@shared/demo-surfaces";
+import {
+  evaluateRecordedSurfaceQuality,
+  selectDemoSurface,
+} from "@shared/demo-surfaces";
 
 export class AgentStreamError extends Error {
   readonly partial: boolean;
@@ -42,16 +45,7 @@ async function* recordedFixtureStream(request: AgentRequest): AsyncGenerator<Str
   const completedQualityTrace: Partial<TraceRecord> = root?.component === "SurfaceFrame"
     ? {
         ...presentationTrace,
-        qualityChecks: [
-          { code: "recipe_fit", passed: true },
-          { code: "answer_first", passed: true },
-          { code: "sources_last", passed: true },
-          { code: "requested_coverage", passed: true },
-          { code: "duplicate_primary", passed: true },
-          { code: "chart_table_alignment", passed: true },
-          { code: "citation_coverage", passed: true },
-          { code: "content_budget", passed: true },
-        ],
+        qualityChecks: evaluateRecordedSurfaceQuality(selected.spec, selected.sources),
         repairCategory: "none",
         compilerResult: "compiled",
       }
