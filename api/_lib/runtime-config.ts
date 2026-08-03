@@ -2,6 +2,8 @@ const PRODUCTION_ORIGIN = "https://lab.jalbright.dev";
 
 export type RuntimeMode = "production" | "preview" | "development" | "test";
 
+export type SurfaceComposerVersion = "spec-v1" | "plan-v2";
+
 export type RuntimeIssueCode =
   | "LIVE_PROVIDERS_REQUIRED"
   | "CONTEXT_SECRET_REQUIRED"
@@ -10,7 +12,8 @@ export type RuntimeIssueCode =
   | "UPSTASH_URL_INVALID"
   | "ORIGIN_ALLOWLIST_REQUIRED"
   | "ORIGIN_ALLOWLIST_INVALID"
-  | "DEMO_FIXTURES_FORBIDDEN";
+  | "DEMO_FIXTURES_FORBIDDEN"
+  | "SURFACE_COMPOSER_VERSION_INVALID";
 
 export type RuntimeConfig = {
   mode: RuntimeMode;
@@ -24,6 +27,7 @@ export type RuntimeConfig = {
   };
   allowedOrigins: readonly string[];
   allowDemoFixtures: boolean;
+  surfaceComposerVersion: SurfaceComposerVersion;
 };
 
 export type RuntimeReadinessMetadata = {
@@ -146,6 +150,9 @@ export function readRuntimeConfig(
   const upstashToken =
     value(environment, "UPSTASH_REDIS_REST_TOKEN") ?? value(environment, "KV_REST_API_TOKEN");
   const allowDemoFixtures = parseBoolean(environment.ALLOW_DEMO_FIXTURES);
+  const surfaceComposerVersionValue = value(environment, "SURFACE_COMPOSER_VERSION");
+  const surfaceComposerVersion: SurfaceComposerVersion =
+    surfaceComposerVersionValue === "plan-v2" ? "plan-v2" : "spec-v1";
   const originResult = allowedOrigins(environment);
   const issues = new Set<RuntimeIssueCode>();
 
@@ -172,6 +179,14 @@ export function readRuntimeConfig(
 
   if (isProduction && allowDemoFixtures) issues.add("DEMO_FIXTURES_FORBIDDEN");
 
+  if (
+    surfaceComposerVersionValue &&
+    surfaceComposerVersionValue !== "spec-v1" &&
+    surfaceComposerVersionValue !== "plan-v2"
+  ) {
+    issues.add("SURFACE_COMPOSER_VERSION_INVALID");
+  }
+
   if (issues.size > 0) return { ready: false, issues: [...issues] };
 
   const upstash = upstashUrl && upstashToken ? { url: upstashUrl, token: upstashToken } : undefined;
@@ -184,6 +199,7 @@ export function readRuntimeConfig(
     upstash,
     allowedOrigins: originResult.origins,
     allowDemoFixtures,
+    surfaceComposerVersion,
   };
 
   return {

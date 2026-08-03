@@ -10,7 +10,42 @@ type LogEvent = {
   componentCount?: number;
   sourceCount?: number;
   errorCode?: string;
+  recipeId?:
+    | "weather.snapshot"
+    | "weather.decision"
+    | "weather.outlook"
+    | "comparison.verdict"
+    | "comparison.scorecard"
+    | "comparison.trend"
+    | "research.brief"
+    | "research.timeline"
+    | "research.claims";
+  density?: "brief" | "balanced" | "detailed";
+  emphasis?: "answer" | "decision" | "trend" | "evidence" | "risk";
+  validationCategory?: "valid" | "json" | "schema" | "semantic" | "evidence" | "fallback";
 };
+
+const RECIPE_IDS = new Set([
+  "weather.snapshot",
+  "weather.decision",
+  "weather.outlook",
+  "comparison.verdict",
+  "comparison.scorecard",
+  "comparison.trend",
+  "research.brief",
+  "research.timeline",
+  "research.claims",
+]);
+const DENSITIES = new Set(["brief", "balanced", "detailed"]);
+const EMPHASES = new Set(["answer", "decision", "trend", "evidence", "risk"]);
+const VALIDATION_CATEGORIES = new Set([
+  "valid",
+  "json",
+  "schema",
+  "semantic",
+  "evidence",
+  "fallback",
+]);
 
 function normalized(event: LogEvent): LogEvent {
   return {
@@ -25,6 +60,12 @@ function normalized(event: LogEvent): LogEvent {
     ...(event.componentCount === undefined ? {} : { componentCount: Math.max(0, event.componentCount) }),
     ...(event.sourceCount === undefined ? {} : { sourceCount: Math.max(0, event.sourceCount) }),
     ...(event.errorCode ? { errorCode: event.errorCode.slice(0, 80) } : {}),
+    ...(event.recipeId && RECIPE_IDS.has(event.recipeId) ? { recipeId: event.recipeId } : {}),
+    ...(event.density && DENSITIES.has(event.density) ? { density: event.density } : {}),
+    ...(event.emphasis && EMPHASES.has(event.emphasis) ? { emphasis: event.emphasis } : {}),
+    ...(event.validationCategory && VALIDATION_CATEGORIES.has(event.validationCategory)
+      ? { validationCategory: event.validationCategory }
+      : {}),
   };
 }
 

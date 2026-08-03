@@ -11,7 +11,9 @@ import {
 } from "../../shared/schemas.js";
 
 const STABLE_API_VERSION = "v1" as const;
-const STRUCTURED_OUTPUT_FUNCTION = "emit_surface_spec";
+export type StructuredOutputFunctionName = "emit_surface_spec" | "emit_surface_plan";
+
+const DEFAULT_STRUCTURED_OUTPUT_FUNCTION: StructuredOutputFunctionName = "emit_surface_spec";
 
 const WEATHER_TOOL = {
   type: "function",
@@ -107,6 +109,7 @@ export interface GeminiStructuredOutputRequest {
   input: string;
   systemInstruction: string;
   schema: Record<string, unknown>;
+  functionName?: StructuredOutputFunctionName;
   signal?: AbortSignal;
 }
 
@@ -162,16 +165,19 @@ export class GeminiToolRoundLimitError extends GeminiProviderError {
   }
 }
 
-export function structuredOutputFromInteraction(interaction: GeminiInteraction): string {
+export function structuredOutputFromInteraction(
+  interaction: GeminiInteraction,
+  functionName: StructuredOutputFunctionName = DEFAULT_STRUCTURED_OUTPUT_FUNCTION,
+): string {
   const calls = interaction.steps.filter(
     (step): step is Interactions.FunctionCallStep =>
-      step.type === "function_call" && step.name === STRUCTURED_OUTPUT_FUNCTION,
+      step.type === "function_call" && step.name === functionName,
   );
   if (interaction.status !== "requires_action" || calls.length !== 1) {
-    throw new GeminiProviderError("Gemini did not emit exactly one structured SurfaceSpec.");
+    throw new GeminiProviderError(`Gemini did not emit exactly one ${functionName} result.`);
   }
   const serialized = JSON.stringify(calls[0]?.arguments);
-  if (!serialized) throw new GeminiProviderError("Gemini emitted invalid SurfaceSpec arguments.");
+  if (!serialized) throw new GeminiProviderError(`Gemini emitted invalid ${functionName} arguments.`);
   return serialized;
 }
 
@@ -199,6 +205,7 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Gemin
     structuredOutput: {
       async generate(request) {
         if (request.signal?.aborted) throw new DOMException("Request timed out", "AbortError");
+        const functionName = request.functionName ?? DEFAULT_STRUCTURED_OUTPUT_FUNCTION;
         const interaction = await sdk.interactions.create({
           model: MODEL_ID,
           store: false,
@@ -210,18 +217,23 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Gemin
           ],
           system_instruction: [
             request.systemInstruction,
-            `Call ${STRUCTURED_OUTPUT_FUNCTION} exactly once. Do not return narrative text.`,
+            `Call ${functionName} exactly once. Do not return narrative text.`,
           ].join(" "),
           tools: [
             {
               type: "function",
-              name: STRUCTURED_OUTPUT_FUNCTION,
-              description: "Emits one complete trusted SurfaceSpec for server validation.",
+              name: functionName,
+              description:
+                functionName === "emit_surface_plan"
+                  ? "Emits one complete semantic SurfacePlan for server validation and compilation."
+                  : "Emits one complete trusted SurfaceSpec for server validation.",
               parameters: request.schema,
             },
           ],
         });
-        return { text: structuredOutputFromInteraction(interaction as GeminiInteraction) };
+        return {
+          text: structuredOutputFromInteraction(interaction as GeminiInteraction, functionName),
+        };
       },
     },
   };
