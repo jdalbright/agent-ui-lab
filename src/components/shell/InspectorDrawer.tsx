@@ -26,6 +26,19 @@ export interface SafeValidationSummary {
   issues: readonly string[];
 }
 
+export interface SafeQualityCheck {
+  code:
+    | "recipe_fit"
+    | "answer_first"
+    | "sources_last"
+    | "requested_coverage"
+    | "duplicate_primary"
+    | "chart_table_alignment"
+    | "citation_coverage"
+    | "content_budget";
+  passed: boolean;
+}
+
 /**
  * Deliberately narrow: this is the complete set of trace data the inspector can render.
  * Tool arguments must already be sanitized. Thoughts, hidden prompts, and credentials do not
@@ -44,6 +57,21 @@ export interface SafeTraceEntry {
   sourceIds?: readonly string[];
   componentNames?: readonly string[];
   validation?: SafeValidationSummary;
+  recipeId?:
+    | "weather.snapshot"
+    | "weather.decision"
+    | "weather.outlook"
+    | "comparison.verdict"
+    | "comparison.scorecard"
+    | "comparison.trend"
+    | "research.brief"
+    | "research.timeline"
+    | "research.claims";
+  density?: "brief" | "balanced" | "detailed";
+  emphasis?: "answer" | "decision" | "trend" | "evidence" | "risk";
+  qualityChecks?: readonly SafeQualityCheck[];
+  repairCategory?: "none" | "semantic";
+  compilerResult?: "compiled" | "deterministic-fallback";
 }
 
 /** A content-free summary of one trusted component in the rendered answer tree. */
@@ -84,6 +112,8 @@ const TRACE_STATUS_LABELS: Record<SafeTraceStatus, string> = {
   fallback: "Fallback",
   error: "Needs attention",
 };
+
+const titleCase = (value: string) => `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 
 const CREDENTIAL_NAME_PATTERN = /authorization|cookie|credential|password|secret|token|api.?key/i;
 const CREDENTIAL_VALUE_PATTERN =
@@ -344,6 +374,15 @@ export function InspectorDrawer({
                   const componentNames = (entry.componentNames ?? [])
                     .map((componentName) => safeText(componentName, 80))
                     .filter(Boolean);
+                  const qualityChecks = entry.qualityChecks ?? [];
+                  const passedQualityChecks = qualityChecks.filter((check) => check.passed).length;
+                  const presentationLabel =
+                    entry.density && entry.emphasis
+                      ? `${titleCase(entry.density)} · ${titleCase(entry.emphasis)}`
+                      : null;
+                  const compilerLabel = entry.compilerResult
+                    ? `${entry.compilerResult === "compiled" ? "Compiled" : "Deterministic fallback"} · ${entry.repairCategory === "semantic" ? "Semantic repair" : "No repair"}`
+                    : null;
 
                   return (
                     <li
@@ -410,6 +449,30 @@ export function InspectorDrawer({
                                 <code key={`${componentName}-${componentIndex}`}>{componentName}</code>
                               ))}
                             </span>
+                          </div>
+                        ) : null}
+                        {entry.recipeId ? (
+                          <div className="agent-inspector__trace-fact">
+                            <span className="agent-inspector__trace-fact-label">Recipe</span>
+                            <code>{entry.recipeId}</code>
+                          </div>
+                        ) : null}
+                        {presentationLabel ? (
+                          <div className="agent-inspector__trace-fact">
+                            <span className="agent-inspector__trace-fact-label">Presentation</span>
+                            <span>{presentationLabel}</span>
+                          </div>
+                        ) : null}
+                        {qualityChecks.length > 0 ? (
+                          <div className="agent-inspector__trace-fact">
+                            <span className="agent-inspector__trace-fact-label">Quality checks</span>
+                            <span>{passedQualityChecks} of {qualityChecks.length} passed</span>
+                          </div>
+                        ) : null}
+                        {compilerLabel ? (
+                          <div className="agent-inspector__trace-fact">
+                            <span className="agent-inspector__trace-fact-label">Compiler</span>
+                            <span>{compilerLabel}</span>
                           </div>
                         ) : null}
                         {entry.validation ? (

@@ -12,7 +12,11 @@ import {
   type StreamEvent,
   type SurfaceSpec,
 } from "../shared/schemas.js";
-import { composeSurfaceSpec } from "./_lib/composition.js";
+import {
+  composeSurfacePlan,
+  composeSurfaceSpec,
+  type SurfacePlanCompositionMetadata,
+} from "./_lib/composition.js";
 import {
   ContextTokenError,
   createContextToken,
@@ -39,6 +43,7 @@ import {
   validateOrigin,
 } from "./_lib/request-validation.js";
 import { readRuntimeConfig } from "./_lib/runtime-config.js";
+import { selectSurfaceComposer } from "./_lib/surface-composer-routing.js";
 import { createTrace } from "./_lib/trace.js";
 
 type PipelineMode = "live" | "recorded-fixture" | "safe-fallback";
@@ -288,6 +293,7 @@ export default async function handler(request: ServerRequest, response: ServerRe
   let spec: SurfaceSpec;
   let sources: readonly SourceRecord[] = [];
   let repairCount = 0;
+  let presentation: SurfacePlanCompositionMetadata | undefined;
   const turns = priorTurns(contextSecret, agentRequest.contextToken);
   const capability = classifyCapability(agentRequest.prompt, {
     hasApprovedCoordinates: agentRequest.client.coordinates?.permission === "granted",
@@ -355,26 +361,71 @@ export default async function handler(request: ServerRequest, response: ServerRe
 
       writeEvent(response, status("composing", "Composing the interface"));
       const compositionStarted = Date.now();
-      const composition = await withDeadline(
-        composeSurfaceSpec({
-          gemini,
-          prompt: contextualPrompt(agentRequest, turns),
-          clientContext: agentRequest.client,
-          retrieval,
-          signal: controller.signal,
-        }),
-        controller.signal,
+      const compositionPrompt = contextualPrompt(agentRequest, turns);
+      const composerVersion = selectSurfaceComposer(
+        config.surfaceComposerVersion,
+        capability.surfaceKind ?? "narrative",
       );
-      spec = composition.spec;
-      repairCount = composition.repairCount;
+      if (composerVersion === "plan-v2") {
+        const composition = await withDeadline(
+          composeSurfacePlan({
+            gemini,
+            prompt: compositionPrompt,
+            clientContext: agentRequest.client,
+            retrieval,
+            signal: controller.signal,
+          }),
+          controller.signal,
+        );
+        spec = composition.spec;
+        repairCount = composition.repairCount;
+        presentation = composition.metadata;
+        if (composition.fallbackUsed) mode = "safe-fallback";
+      } else {
+        const composition = await withDeadline(
+          composeSurfaceSpec({
+            gemini,
+            prompt: compositionPrompt,
+            clientContext: agentRequest.client,
+            retrieval,
+            signal: controller.signal,
+          }),
+          controller.signal,
+        );
+        spec = composition.spec;
+        repairCount = composition.repairCount;
+      }
+      const compositionDurationMs = Date.now() - compositionStarted;
       writeEvent(response, {
         type: "trace",
         trace: createTrace({
           stage: "composition",
           label: "Compose interface",
-          status: "complete",
-          durationMs: Date.now() - compositionStarted,
+          status:
+            presentation?.compilerResult === "deterministic-fallback"
+              ? "fallback"
+              : repairCount === 1
+                ? "repaired"
+                : "complete",
+          durationMs: compositionDurationMs,
+          ...presentation,
         }),
+      });
+      logEvent({
+        requestId: agentRequest.requestId,
+        stage: "composition",
+        durationMs: compositionDurationMs,
+        repairCount,
+        componentCount: spec.components.length,
+        ...(presentation
+          ? {
+              recipeId: presentation.recipeId,
+              density: presentation.density,
+              emphasis: presentation.emphasis,
+              validationCategory:
+                presentation.compilerResult === "deterministic-fallback" ? "fallback" : "valid",
+            }
+          : {}),
       });
     } else if (config.allowDemoFixtures || !config.isProduction) {
       mode = "recorded-fixture";
@@ -406,6 +457,7 @@ export default async function handler(request: ServerRequest, response: ServerRe
         status: repairCount === 1 ? "repaired" : "complete",
         componentNames,
         validation: { valid: true, repairCount, issues: [] },
+        ...presentation,
       }),
     });
 
@@ -445,6 +497,15 @@ export default async function handler(request: ServerRequest, response: ServerRe
       repairCount,
       componentCount: spec.components.length,
       sourceCount: sources.length,
+      ...(presentation
+        ? {
+            recipeId: presentation.recipeId,
+            density: presentation.density,
+            emphasis: presentation.emphasis,
+            validationCategory:
+              presentation.compilerResult === "deterministic-fallback" ? "fallback" : "valid",
+          }
+        : {}),
     });
   } catch (error) {
     const timedOut = controller.signal.aborted;
