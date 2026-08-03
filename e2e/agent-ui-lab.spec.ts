@@ -108,7 +108,9 @@ test.describe("recorded suggestion surfaces", () => {
     await expect(page.getByText("Best walk window", { exact: true })).toBeVisible();
     await expect(page.getByText("7:30–8:30 PM", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "Hourly" })).toBeVisible();
-    await expect(page.getByRole("region", { name: "5-day outlook" })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "5-day outlook", exact: true }),
+    ).toBeVisible();
     await expect(page.locator("[data-a2ui-version='v0.9.1']")).toBeVisible();
   });
 
@@ -117,9 +119,13 @@ test.describe("recorded suggestion surfaces", () => {
     await runSuggestion(page, COMPARISON_PROMPT);
 
     await expect(page.getByText("Asheville is the cooler outdoor pick", { exact: true })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Weekend conditions" })).toBeVisible();
-    await expect(page.getByRole("img", { name: "Hourly temperature comparison" })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Hourly temperature comparison data" })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Saturday temperature table alternative" }),
+    ).toBeVisible();
+    await expect(page.getByRole("img", { name: "Saturday temperature comparison" })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Saturday temperature comparison data" }),
+    ).toBeVisible();
   });
 
   test("research suggestion renders evidence with immutable source links", async ({ page }) => {

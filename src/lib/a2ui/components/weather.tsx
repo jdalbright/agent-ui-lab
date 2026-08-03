@@ -167,7 +167,12 @@ export const DailyForecast = createComponentImplementation(
             ))}
           </ol>
         ) : (
-          <div className="a2ui-table-scroll" tabIndex={0} role="region" aria-label={props.label}>
+          <div
+            className="a2ui-table-scroll"
+            tabIndex={0}
+            role="region"
+            aria-label={`${props.label} table`}
+          >
             <table className="a2ui-table a2ui-daily-table">
               <thead>
                 <tr>
