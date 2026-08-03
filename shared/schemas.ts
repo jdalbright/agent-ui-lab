@@ -59,11 +59,43 @@ export const WeatherConditionSchema = z.enum([
   "unknown",
 ]);
 
+export const SurfaceRecipeIdSchema = z.enum([
+  "weather.snapshot",
+  "weather.decision",
+  "weather.outlook",
+  "comparison.verdict",
+  "comparison.scorecard",
+  "comparison.trend",
+  "research.brief",
+  "research.timeline",
+  "research.claims",
+]);
+
+export const SurfaceDensitySchema = z.enum(["brief", "balanced", "detailed"]);
+export const SurfaceEmphasisSchema = z.enum([
+  "answer",
+  "decision",
+  "trend",
+  "evidence",
+  "risk",
+]);
+
 const nodeBase = {
   id: idSchema,
 };
 
 const children = z.array(idSchema).min(1).max(20);
+
+export const SurfaceFrameNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("SurfaceFrame"),
+    children,
+    recipeId: SurfaceRecipeIdSchema,
+    density: SurfaceDensitySchema,
+    emphasis: SurfaceEmphasisSchema,
+  })
+  .strict();
 
 export const EditorialHeadingNodeSchema = z
   .object({
@@ -144,6 +176,7 @@ export const WeatherHeroNodeSchema = z
     recommendationLabel: boundedText(80),
     recommendationValue: boundedText(120),
     recommendationDetail: boundedText(240),
+    variant: z.enum(["snapshot", "decision"]).optional(),
   })
   .strict();
 
@@ -174,6 +207,7 @@ export const HourlyForecastNodeSchema = z
     label: boundedText(80).default("Hourly"),
     unit: z.enum(["F", "C"]),
     items: z.array(hourlyItemSchema).min(2).max(24),
+    variant: z.enum(["strip", "chart"]).optional(),
   })
   .strict();
 
@@ -194,6 +228,7 @@ export const DailyForecastNodeSchema = z
     label: boundedText(80).default("Outlook"),
     unit: z.enum(["F", "C"]),
     items: z.array(dailyItemSchema).min(1).max(10),
+    variant: z.enum(["cards", "table"]).optional(),
   })
   .strict();
 
@@ -233,6 +268,7 @@ export const ComparisonSummaryNodeSchema = z
     title: boundedText(180),
     recommendation: boundedText(400),
     items: z.array(comparisonItemSchema).min(2).max(4),
+    variant: z.enum(["verdict", "balanced"]).optional(),
   })
   .strict();
 
@@ -261,6 +297,7 @@ export const ComparisonChartNodeSchema = z
     labels: z.array(boundedText(60)).min(2).max(12),
     series: z.array(chartSeriesSchema).min(1).max(4),
     unit: z.string().trim().max(24).optional(),
+    variant: z.enum(["line", "bar"]).optional(),
   })
   .strict();
 
@@ -271,6 +308,7 @@ export const ResearchLeadNodeSchema = z
     title: boundedText(220),
     summary: boundedText(1_200),
     sourceIds: z.array(sourceIdSchema).min(1).max(LIMITS.sources),
+    variant: z.enum(["feature", "brief"]).optional(),
   })
   .strict();
 
@@ -279,6 +317,7 @@ const evidenceItemSchema = z
     title: boundedText(180),
     finding: boundedText(700),
     sourceId: sourceIdSchema,
+    stance: z.enum(["support", "challenge", "neutral"]).optional(),
   })
   .strict();
 
@@ -288,6 +327,7 @@ export const EvidenceListNodeSchema = z
     component: z.literal("EvidenceList"),
     label: boundedText(80).default("Evidence"),
     items: z.array(evidenceItemSchema).min(1).max(8),
+    variant: z.enum(["stack", "grid", "for-against"]).optional(),
   })
   .strict();
 
@@ -319,6 +359,7 @@ export const SourceListNodeSchema = z
   .strict();
 
 export const SurfaceNodeSchema = z.discriminatedUnion("component", [
+  SurfaceFrameNodeSchema,
   EditorialHeadingNodeSchema,
   TextBlockNodeSchema,
   MetricNodeSchema,
@@ -437,6 +478,9 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
 export type AgentRequest = z.infer<typeof AgentRequestSchema>;
 export type ClientContext = z.infer<typeof ClientContextSchema>;
 export type SourceRecord = z.infer<typeof SourceRecordSchema>;
+export type SurfaceRecipeId = z.infer<typeof SurfaceRecipeIdSchema>;
+export type SurfaceDensity = z.infer<typeof SurfaceDensitySchema>;
+export type SurfaceEmphasis = z.infer<typeof SurfaceEmphasisSchema>;
 export type SurfaceNode = z.infer<typeof SurfaceNodeSchema>;
 export type SurfaceSpec = z.infer<typeof SurfaceSpecSchema>;
 export type A2uiMessage = z.infer<typeof A2uiMessageSchema>;

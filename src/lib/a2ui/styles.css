@@ -1314,3 +1314,407 @@
     justify-self: end;
   }
 }
+
+/* Phase 2 surface grammar. Plans choose semantics; these rules own presentation. */
+.a2ui-surface-frame {
+  --a2ui-frame-gap: 1.5rem;
+  container-name: a2ui-surface;
+  container-type: inline-size;
+  display: grid;
+  gap: var(--a2ui-frame-gap);
+  min-inline-size: 0;
+}
+
+.a2ui-surface-frame[data-density="brief"] {
+  --a2ui-frame-gap: 1rem;
+}
+
+.a2ui-surface-frame[data-density="detailed"] {
+  --a2ui-frame-gap: 2rem;
+}
+
+.a2ui-surface-frame__module {
+  min-inline-size: 0;
+}
+
+.a2ui-surface-frame[data-emphasis="risk"]
+  > .a2ui-surface-frame__module:has(.a2ui-alert) {
+  order: -1;
+}
+
+.a2ui-surface-frame[data-emphasis="evidence"] .a2ui-source-link,
+.a2ui-surface-frame[data-emphasis="trend"] .a2ui-chart > h3 {
+  color: var(--a2ui-blue);
+}
+
+.a2ui-weather-hero[data-variant] {
+  container-type: inline-size;
+}
+
+.a2ui-weather-hero--snapshot {
+  min-block-size: 12rem;
+  grid-template-areas: "place place" "reading condition" "recommendation recommendation";
+  grid-template-columns: minmax(0, 1fr) minmax(7rem, 0.75fr);
+  gap: 1rem 0;
+  padding: 1.5rem;
+}
+
+.a2ui-weather-hero--snapshot .a2ui-weather-hero__recommendation {
+  padding: 0.75rem 0 0;
+  border-block-end-color: var(--a2ui-blue);
+}
+
+.a2ui-weather-hero--snapshot .a2ui-weather-hero__recommendation dd:first-of-type {
+  color: var(--a2ui-ink);
+  font-size: clamp(1.5rem, 8cqi, 2.25rem);
+}
+
+.a2ui-weather-hero--decision {
+  border-block-end: 0.25rem solid var(--a2ui-red);
+}
+
+.a2ui-weather-hero--decision .a2ui-weather-hero__recommendation {
+  background: color-mix(in srgb, var(--a2ui-coral) 82%, transparent);
+  padding: 1rem;
+}
+
+.a2ui-hourly-forecast--strip .a2ui-hourly > li {
+  min-block-size: 7.5rem;
+  justify-content: start;
+  padding-block: 0.5rem 0.75rem;
+}
+
+.a2ui-hourly-forecast--chart .a2ui-hourly > li {
+  padding-block-end: 1.25rem;
+}
+
+.a2ui-daily-cards {
+  display: grid;
+  grid-auto-columns: minmax(9rem, 72%);
+  grid-auto-flow: column;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  padding: 0 0 0.75rem;
+  scroll-snap-type: inline proximity;
+  scrollbar-color: var(--a2ui-muted) transparent;
+}
+
+.a2ui-daily-cards > li {
+  display: grid;
+  gap: 0.35rem;
+  min-inline-size: 0;
+  padding: 1rem;
+  border-block: 1px solid var(--a2ui-line);
+  border-inline-end: 1px solid var(--a2ui-line);
+  scroll-snap-align: start;
+}
+
+.a2ui-daily-cards > li:first-child {
+  border-inline-start: 1px solid var(--a2ui-line);
+}
+
+.a2ui-daily-cards time,
+.a2ui-daily-cards strong {
+  font-weight: 700;
+}
+
+.a2ui-daily-cards strong {
+  font-family: var(--font-display, "Newsreader Variable", Newsreader, Georgia, serif);
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.a2ui-daily-cards .a2ui-weather-glyph {
+  block-size: 2.5rem;
+  color: #50617a;
+  inline-size: 2.5rem;
+  stroke-width: 1.5;
+}
+
+.a2ui-daily-cards > li > span:not(.a2ui-daily-cards__condition) {
+  color: var(--a2ui-muted);
+  font-size: 0.78rem;
+}
+
+.a2ui-daily-cards__condition {
+  text-transform: capitalize;
+}
+
+.a2ui-daily-forecast--table .a2ui-table-scroll {
+  overflow-x: auto;
+}
+
+.a2ui-daily-forecast--table .a2ui-daily-table {
+  display: table;
+  min-inline-size: 38rem;
+}
+
+.a2ui-daily-forecast--table .a2ui-daily-table thead {
+  display: table-header-group;
+}
+
+.a2ui-daily-forecast--table .a2ui-daily-table tbody {
+  display: table-row-group;
+  min-inline-size: 0;
+}
+
+.a2ui-daily-forecast--table .a2ui-daily-table tr {
+  display: table-row;
+  min-block-size: 0;
+  padding: 0;
+  border: 0;
+}
+
+.a2ui-daily-forecast--table .a2ui-daily-table th,
+.a2ui-daily-forecast--table .a2ui-daily-table td {
+  display: table-cell;
+  padding: 0.7rem 0.75rem;
+  border-block-end: 1px solid var(--a2ui-line);
+  white-space: normal;
+}
+
+.a2ui-daily-forecast--table .a2ui-daily-table th {
+  margin: 0;
+}
+
+.a2ui-daily-forecast--table .a2ui-daily-table .a2ui-condition-cell {
+  align-items: center;
+  display: flex;
+}
+
+.a2ui-daily-forecast--table .a2ui-daily-table .a2ui-condition-cell span {
+  position: static;
+  inline-size: auto;
+  block-size: auto;
+  overflow: visible;
+  clip: auto;
+}
+
+.a2ui-daily-forecast--table .a2ui-daily-table td::before {
+  content: none;
+}
+
+.a2ui-comparison-summary[data-variant] {
+  container-type: inline-size;
+}
+
+.a2ui-comparison-summary--verdict {
+  padding-block: 0.5rem;
+}
+
+.a2ui-comparison-summary--verdict .a2ui-comparison-summary__lead {
+  padding-inline-start: 1rem;
+  border-inline-start: 0.25rem solid var(--a2ui-red);
+}
+
+.a2ui-comparison-summary--verdict .a2ui-comparison-summary__lead h3 {
+  font-size: clamp(2rem, 8cqi, 3.5rem);
+  line-height: 1;
+}
+
+.a2ui-comparison-summary--verdict
+  .a2ui-comparison-summary__items
+  li.is-recommended {
+  background: var(--a2ui-coral);
+  padding-inline: 0.75rem;
+}
+
+.a2ui-comparison-summary--balanced .a2ui-comparison-summary__items {
+  grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
+  gap: 1rem;
+}
+
+.a2ui-comparison-summary--balanced .a2ui-comparison-summary__items li {
+  border-block-end: 1px solid var(--a2ui-line);
+}
+
+.a2ui-chart--bar .a2ui-chart__graphic {
+  background: color-mix(in srgb, var(--a2ui-sky) 55%, var(--a2ui-paper));
+}
+
+.a2ui-chart__bar--0 {
+  fill: #176a8a;
+}
+
+.a2ui-chart__bar--1 {
+  fill: #a13d2d;
+}
+
+.a2ui-chart__bar--2 {
+  fill: #65743d;
+}
+
+.a2ui-chart__bar--3 {
+  fill: #6b548c;
+}
+
+.a2ui-research-lead[data-variant] {
+  container-type: inline-size;
+}
+
+.a2ui-research-lead--feature {
+  padding: clamp(1.25rem, 6cqi, 3rem);
+  border-block: 1px solid var(--a2ui-line);
+  background: var(--a2ui-soft);
+}
+
+.a2ui-research-lead--feature h2 {
+  font-size: clamp(2.25rem, 8cqi, 5rem);
+  max-inline-size: 18ch;
+}
+
+.a2ui-research-lead--brief {
+  grid-template-columns: minmax(0, 1fr);
+  padding-block-end: 1.25rem;
+}
+
+.a2ui-research-lead--brief h2 {
+  font-size: clamp(1.75rem, 5cqi, 3rem);
+}
+
+.a2ui-evidence[data-variant] {
+  container-type: inline-size;
+}
+
+.a2ui-evidence__stance {
+  inline-size: fit-content;
+  color: var(--a2ui-muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.a2ui-evidence li[data-stance="support"] {
+  border-block-start-color: var(--a2ui-blue);
+}
+
+.a2ui-evidence li[data-stance="challenge"] {
+  border-block-start-color: var(--a2ui-red);
+}
+
+.a2ui-evidence li[data-stance="support"] .a2ui-evidence__stance {
+  color: var(--a2ui-blue);
+}
+
+.a2ui-evidence li[data-stance="challenge"] .a2ui-evidence__stance {
+  color: var(--a2ui-red);
+}
+
+.a2ui-evidence--grid ol,
+.a2ui-evidence--for-against ol {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.a2ui-evidence--grid li,
+.a2ui-evidence--for-against li {
+  block-size: 100%;
+  padding: 1rem;
+  border-block-end: 1px solid var(--a2ui-line);
+  background: var(--a2ui-paper);
+}
+
+.a2ui-surface-frame[data-recipe="weather.snapshot"] .a2ui-rail__track {
+  grid-auto-columns: minmax(min(10rem, 64vw), 1fr);
+}
+
+.a2ui-surface-frame[data-recipe="weather.decision"]
+  > .a2ui-surface-frame__module:has(.a2ui-recommendation) {
+  padding: 0.25rem;
+  background: var(--a2ui-coral);
+}
+
+.a2ui-surface-frame[data-recipe="weather.outlook"] .a2ui-forecast {
+  padding-block: 0.25rem;
+}
+
+.a2ui-surface-frame[data-recipe="comparison.scorecard"]
+  > .a2ui-surface-frame__module:has(.a2ui-table-scroll) {
+  padding: 1rem;
+  border: 1px solid var(--a2ui-line);
+  background: var(--a2ui-soft);
+}
+
+.a2ui-surface-frame[data-recipe="comparison.trend"] .a2ui-chart__graphic {
+  min-block-size: 15rem;
+}
+
+.a2ui-surface-frame[data-recipe="research.brief"] {
+  max-inline-size: 70rem;
+}
+
+.a2ui-surface-frame[data-recipe="research.timeline"] .a2ui-timeline {
+  max-inline-size: 64rem;
+}
+
+.a2ui-surface-frame[data-recipe="research.claims"] .a2ui-evidence__number {
+  font-weight: 700;
+}
+
+@container a2ui-surface (min-width: 40rem) {
+  .a2ui-surface-frame__module:has(.a2ui-weather-hero--snapshot)
+    .a2ui-weather-hero--snapshot {
+    grid-template-areas: "place reading condition" "recommendation recommendation recommendation";
+    grid-template-columns: minmax(0, 1fr) auto minmax(9rem, 0.7fr);
+    padding: 2rem;
+  }
+
+  .a2ui-surface-frame__module:has(.a2ui-daily-cards) .a2ui-daily-cards {
+    grid-auto-columns: initial;
+    grid-auto-flow: row;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    overflow-x: visible;
+  }
+
+  .a2ui-surface-frame__module:has(.a2ui-comparison-summary--verdict)
+    .a2ui-comparison-summary--verdict {
+    grid-template-columns: minmax(0, 1.2fr) minmax(16rem, 0.8fr);
+  }
+
+  .a2ui-surface-frame__module:has(.a2ui-research-lead--brief)
+    .a2ui-research-lead--brief {
+    align-items: end;
+    grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
+  }
+
+  .a2ui-surface-frame__module:has(.a2ui-evidence--grid) .a2ui-evidence--grid ol,
+  .a2ui-surface-frame__module:has(.a2ui-evidence--for-against)
+    .a2ui-evidence--for-against
+    ol {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container a2ui-surface (min-width: 68rem) {
+  .a2ui-surface-frame__module:has(.a2ui-weather-hero--snapshot)
+    .a2ui-weather-hero--snapshot,
+  .a2ui-surface-frame__module:has(.a2ui-weather-hero--decision)
+    .a2ui-weather-hero--decision {
+    grid-template-areas: "place reading condition recommendation";
+    grid-template-columns: minmax(13rem, 1fr) auto minmax(10rem, 0.7fr) minmax(18rem, 1.25fr);
+  }
+
+  .a2ui-surface-frame__module:has(.a2ui-weather-hero--snapshot)
+    .a2ui-weather-hero--snapshot
+    .a2ui-weather-hero__recommendation {
+    padding: 0 0 0.75rem 2rem;
+  }
+
+  .a2ui-surface-frame[data-recipe="comparison.trend"]
+    > .a2ui-surface-frame__module:has(.a2ui-chart) {
+    padding-inline: clamp(1.5rem, 4cqi, 4rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .a2ui-daily-cards,
+  .a2ui-hourly,
+  .a2ui-rail__track {
+    scroll-snap-type: none;
+  }
+}

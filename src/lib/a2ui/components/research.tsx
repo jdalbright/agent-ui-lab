@@ -6,7 +6,13 @@ import {
   SourceListNodeSchema,
   TimelineNodeSchema,
 } from "@shared/schemas";
-import { SourceAnchor, formatSourceDate, sourceMap } from "./common";
+import { SourceAnchor, formatSourceDate, joinClassNames, sourceMap } from "./common";
+
+const STANCE_LABELS = {
+  support: "Supports",
+  challenge: "Challenges",
+  neutral: "Context",
+} as const;
 
 export const ResearchLead = createComponentImplementation(
   {
@@ -18,7 +24,13 @@ export const ResearchLead = createComponentImplementation(
     const sources = sourceMap(context);
     const availableCount = sourceIds.filter((id) => sources.has(id)).length;
     return (
-      <header className="a2ui-research-lead">
+      <header
+        className={joinClassNames(
+          "a2ui-research-lead",
+          `a2ui-research-lead--${props.variant ?? "feature"}`,
+        )}
+        data-variant={props.variant ?? "feature"}
+      >
         <p className="a2ui-eyebrow">Grounded research</p>
         <h2>{props.title}</h2>
         <p>{props.summary}</p>
@@ -36,23 +48,33 @@ export const EvidenceList = createComponentImplementation(
     schema: EvidenceListNodeSchema.omit({ id: true, component: true }),
   },
   ({ props, context }) => {
+    const variant = props.variant ?? "stack";
     const sources = sourceMap(context);
     return (
-      <section className="a2ui-evidence">
+      <section
+        className={joinClassNames("a2ui-evidence", `a2ui-evidence--${variant}`)}
+        data-variant={variant}
+      >
         <h3 className="a2ui-section-title">{props.label}</h3>
         <ol>
-          {props.items.map((item, index) => (
-            <li key={`${item.title}-${index}`}>
-              <span className="a2ui-evidence__number" aria-hidden="true">
-                {String(index + 1).padStart(2, "0")}
-              </span>
-              <div>
-                <h4>{item.title}</h4>
-                <p>{item.finding}</p>
-                <SourceAnchor source={sources.get(item.sourceId)} prefix="Source: " />
-              </div>
-            </li>
-          ))}
+          {props.items.map((item, index) => {
+            const stance = item.stance ?? "neutral";
+            return (
+              <li key={`${item.title}-${index}`} data-stance={stance}>
+                <span className="a2ui-evidence__number" aria-hidden="true">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <div>
+                  {variant === "for-against" || item.stance ? (
+                    <span className="a2ui-evidence__stance">{STANCE_LABELS[stance]}</span>
+                  ) : null}
+                  <h4>{item.title}</h4>
+                  <p>{item.finding}</p>
+                  <SourceAnchor source={sources.get(item.sourceId)} prefix="Source: " />
+                </div>
+              </li>
+            );
+          })}
         </ol>
       </section>
     );

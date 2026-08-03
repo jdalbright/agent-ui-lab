@@ -13,7 +13,13 @@ export const ComparisonSummary = createComponentImplementation(
     schema: ComparisonSummaryNodeSchema.omit({ id: true, component: true }),
   },
   ({ props }) => (
-    <section className="a2ui-comparison-summary">
+    <section
+      className={joinClassNames(
+        "a2ui-comparison-summary",
+        `a2ui-comparison-summary--${props.variant ?? "balanced"}`,
+      )}
+      data-variant={props.variant ?? "balanced"}
+    >
       <div className="a2ui-comparison-summary__lead">
         <p className="a2ui-eyebrow">Comparison</p>
         <h3>{props.title}</h3>
@@ -104,13 +110,22 @@ export const ComparisonChart = createComponentImplementation(
     schema: ComparisonChartNodeSchema.omit({ id: true, component: true }),
   },
   ({ props }) => {
+    const variant = props.variant ?? "line";
     const labels = props.labels as string[];
     const allValues = props.series.flatMap((series) => series.values);
     const minimum = Math.min(...allValues);
     const maximum = Math.max(...allValues);
+    const plotWidth = chartWidth - chartInset.left - chartInset.right;
+    const plotHeight = chartHeight - chartInset.top - chartInset.bottom;
+    const valueSpan = maximum - minimum || 1;
+    const groupWidth = plotWidth / labels.length;
+    const barWidth = Math.max(3, (groupWidth * 0.72) / props.series.length);
 
     return (
-      <figure className="a2ui-chart">
+      <figure
+        className={joinClassNames("a2ui-chart", `a2ui-chart--${variant}`)}
+        data-variant={variant}
+      >
         <h3>{props.title}</h3>
         <div className="a2ui-chart__graphic">
           <svg
@@ -120,7 +135,8 @@ export const ComparisonChart = createComponentImplementation(
             preserveAspectRatio="xMidYMid meet"
           >
             <desc>
-              Line chart. The complete values are available in the table immediately below.
+              {variant === "bar" ? "Bar" : "Line"} chart. The complete values are
+              available in the table immediately below.
             </desc>
             {[0, 1, 2, 3, 4].map((line) => {
               const y = chartInset.top + (line / 4) * (chartHeight - chartInset.top - chartInset.bottom);
@@ -135,13 +151,37 @@ export const ComparisonChart = createComponentImplementation(
                 />
               );
             })}
-            {props.series.map((series, index) => (
-              <polyline
-                key={series.label}
-                className={`a2ui-chart__series a2ui-chart__series--${index % 4}`}
-                points={chartPoints(series.values, minimum, maximum)}
-              />
-            ))}
+            {variant === "bar"
+              ? props.series.flatMap((series, seriesIndex) =>
+                  series.values.map((value, valueIndex) => {
+                    const normalized = (value - minimum) / valueSpan;
+                    const height = Math.max(2, normalized * plotHeight);
+                    const groupStart = chartInset.left + valueIndex * groupWidth;
+                    const x =
+                      groupStart +
+                      groupWidth * 0.14 +
+                      seriesIndex * barWidth;
+                    const y = chartHeight - chartInset.bottom - height;
+                    return (
+                      <rect
+                        key={`${series.label}-${valueIndex}`}
+                        className={`a2ui-chart__bar a2ui-chart__bar--${seriesIndex % 4}`}
+                        x={x}
+                        y={y}
+                        width={barWidth}
+                        height={height}
+                        rx="1"
+                      />
+                    );
+                  }),
+                )
+              : props.series.map((series, index) => (
+                  <polyline
+                    key={series.label}
+                    className={`a2ui-chart__series a2ui-chart__series--${index % 4}`}
+                    points={chartPoints(series.values, minimum, maximum)}
+                  />
+                ))}
           </svg>
         </div>
         <ul className="a2ui-chart__legend" aria-label="Chart legend">

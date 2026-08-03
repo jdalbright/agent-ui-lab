@@ -21,28 +21,37 @@ export const WeatherHero = createComponentImplementation(
     name: "WeatherHero",
     schema: WeatherHeroNodeSchema.omit({ id: true, component: true }),
   },
-  ({ props }) => (
-    <section className="a2ui-weather-hero" aria-label={`Weather for ${props.location}`}>
-      <div className="a2ui-weather-hero__place">
-        <h2>{props.location}</h2>
-        <p>{props.dateLabel}</p>
-      </div>
-      <div className="a2ui-weather-hero__reading">
-        <strong aria-label={`${props.temperature} degrees ${props.unit === "F" ? "Fahrenheit" : "Celsius"}`}>
-          {Math.round(props.temperature)}°
-        </strong>
-      </div>
-      <div className="a2ui-weather-hero__condition">
-        <WeatherGlyph condition={props.conditionKey} />
-        <p>{props.condition}</p>
-      </div>
-      <dl className="a2ui-weather-hero__recommendation">
-        <dt>{props.recommendationLabel}</dt>
-        <dd>{props.recommendationValue}</dd>
-        <dd>{props.recommendationDetail}</dd>
-      </dl>
-    </section>
-  ),
+  ({ props }) => {
+    const variant = props.variant ?? "decision";
+    return (
+      <section
+        className={joinClassNames("a2ui-weather-hero", `a2ui-weather-hero--${variant}`)}
+        data-variant={variant}
+        aria-label={`Weather for ${props.location}`}
+      >
+        <div className="a2ui-weather-hero__place">
+          <h2>{props.location}</h2>
+          <p>{props.dateLabel}</p>
+        </div>
+        <div className="a2ui-weather-hero__reading">
+          <strong
+            aria-label={`${props.temperature} degrees ${props.unit === "F" ? "Fahrenheit" : "Celsius"}`}
+          >
+            {Math.round(props.temperature)}°
+          </strong>
+        </div>
+        <div className="a2ui-weather-hero__condition">
+          <WeatherGlyph condition={props.conditionKey} />
+          <p>{props.condition}</p>
+        </div>
+        <dl className="a2ui-weather-hero__recommendation">
+          <dt>{props.recommendationLabel}</dt>
+          <dd>{props.recommendationValue}</dd>
+          <dd>{props.recommendationDetail}</dd>
+        </dl>
+      </section>
+    );
+  },
 );
 
 export const RecommendationBand = createComponentImplementation(
@@ -72,6 +81,7 @@ export const HourlyForecast = createComponentImplementation(
     schema: HourlyForecastNodeSchema.omit({ id: true, component: true }),
   },
   ({ props, context }) => {
+    const variant = props.variant ?? "chart";
     const labelId = `${context.componentModel.id}-label`;
     const temperatures = props.items.map((item) => item.temperature);
     const minimum = Math.min(...temperatures);
@@ -85,7 +95,11 @@ export const HourlyForecast = createComponentImplementation(
       })
       .join(" ");
     return (
-      <section className="a2ui-forecast" aria-labelledby={labelId}>
+      <section
+        className={joinClassNames("a2ui-forecast", `a2ui-hourly-forecast--${variant}`)}
+        data-variant={variant}
+        aria-labelledby={labelId}
+      >
         <h3 id={labelId} className="a2ui-section-title">
           {props.label}
         </h3>
@@ -99,20 +113,22 @@ export const HourlyForecast = createComponentImplementation(
             </li>
           ))}
         </ol>
-        <svg
-          className="a2ui-hourly-chart"
-          viewBox="0 0 100 20"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <polyline points={points} />
-          {temperatures.map((temperature, index) => {
-            const x = temperatures.length === 1 ? 0 : (index / (temperatures.length - 1)) * 100;
-            const y = 18 - ((temperature - minimum) / range) * 12;
-            return <circle key={`${temperature}-${index}`} cx={x} cy={y} r="0.65" />;
-          })}
-        </svg>
+        {variant === "chart" ? (
+          <svg
+            className="a2ui-hourly-chart"
+            viewBox="0 0 100 20"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <polyline points={points} />
+            {temperatures.map((temperature, index) => {
+              const x = temperatures.length === 1 ? 0 : (index / (temperatures.length - 1)) * 100;
+              const y = 18 - ((temperature - minimum) / range) * 12;
+              return <circle key={`${temperature}-${index}`} cx={x} cy={y} r="0.65" />;
+            })}
+          </svg>
+        ) : null}
       </section>
     );
   },
@@ -123,38 +139,65 @@ export const DailyForecast = createComponentImplementation(
     name: "DailyForecast",
     schema: DailyForecastNodeSchema.omit({ id: true, component: true }),
   },
-  ({ props }) => (
-    <section className="a2ui-forecast">
-      <h3 className="a2ui-section-title">{props.label}</h3>
-      <div className="a2ui-table-scroll" tabIndex={0} role="region" aria-label={props.label}>
-        <table className="a2ui-table a2ui-daily-table">
-          <thead>
-            <tr>
-              <th scope="col">Day</th>
-              <th scope="col">Conditions</th>
-              <th scope="col">High</th>
-              <th scope="col">Low</th>
-              <th scope="col">Rain</th>
-            </tr>
-          </thead>
-          <tbody>
+  ({ props, context }) => {
+    const variant = props.variant ?? "table";
+    const labelId = `${context.componentModel.id}-label`;
+    return (
+      <section
+        className={joinClassNames("a2ui-forecast", `a2ui-daily-forecast--${variant}`)}
+        data-variant={variant}
+        aria-labelledby={labelId}
+      >
+        <h3 id={labelId} className="a2ui-section-title">
+          {props.label}
+        </h3>
+        {variant === "cards" ? (
+          <ol className="a2ui-daily-cards">
             {props.items.map((item, index) => (
-              <tr key={`${item.date}-${index}`}>
-                <th scope="row">{item.date}</th>
-                <td className="a2ui-condition-cell">
-                  <WeatherGlyph condition={item.condition} />
-                  <span>{item.condition.replaceAll("-", " ")}</span>
-                </td>
-                <td>{temperatureLabel(item.high, props.unit)}</td>
-                <td>{temperatureLabel(item.low, props.unit)}</td>
-                <td>{item.precipitationProbability}%</td>
-              </tr>
+              <li key={`${item.date}-${index}`}>
+                <time>{item.date}</time>
+                <WeatherGlyph condition={item.condition} />
+                <span className="a2ui-daily-cards__condition">
+                  {item.condition.replaceAll("-", " ")}
+                </span>
+                <strong>{temperatureLabel(item.high, props.unit)}</strong>
+                <span>{temperatureLabel(item.low, props.unit)} low</span>
+                <span>{item.precipitationProbability}% rain</span>
+              </li>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  ),
+          </ol>
+        ) : (
+          <div className="a2ui-table-scroll" tabIndex={0} role="region" aria-label={props.label}>
+            <table className="a2ui-table a2ui-daily-table">
+              <thead>
+                <tr>
+                  <th scope="col">Day</th>
+                  <th scope="col">Conditions</th>
+                  <th scope="col">High</th>
+                  <th scope="col">Low</th>
+                  <th scope="col">Rain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {props.items.map((item, index) => (
+                  <tr key={`${item.date}-${index}`}>
+                    <th scope="row">{item.date}</th>
+                    <td className="a2ui-condition-cell">
+                      <WeatherGlyph condition={item.condition} />
+                      <span>{item.condition.replaceAll("-", " ")}</span>
+                    </td>
+                    <td>{temperatureLabel(item.high, props.unit)}</td>
+                    <td>{temperatureLabel(item.low, props.unit)}</td>
+                    <td>{item.precipitationProbability}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    );
+  },
 );
 
 export const WeatherAlert = createComponentImplementation(

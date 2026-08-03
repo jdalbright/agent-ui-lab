@@ -323,6 +323,7 @@ function canonicalNode(
       };
     case "SourceList":
       return { id, component, label: "Sources", sourceIds: sourceId ? [sourceId] : [] };
+    case "SurfaceFrame":
     case "Band":
     case "Split":
     case "Rail":

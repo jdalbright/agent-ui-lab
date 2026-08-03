@@ -11,10 +11,18 @@ export type SurfaceValidationResult =
   | { success: true; spec: SurfaceSpec; sources: SourceRecord[]; depth: number }
   | { success: false; issues: string[] };
 
-type LayoutNode = Extract<SurfaceNode, { component: "Band" | "Split" | "Rail" }>;
+type LayoutNode = Extract<
+  SurfaceNode,
+  { component: "SurfaceFrame" | "Band" | "Split" | "Rail" }
+>;
 
 function isLayoutNode(node: SurfaceNode): node is LayoutNode {
-  return node.component === "Band" || node.component === "Split" || node.component === "Rail";
+  return (
+    node.component === "SurfaceFrame" ||
+    node.component === "Band" ||
+    node.component === "Split" ||
+    node.component === "Rail"
+  );
 }
 
 function referencedSourceIds(spec: SurfaceSpec): string[] {

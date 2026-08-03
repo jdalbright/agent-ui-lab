@@ -7,9 +7,34 @@ import {
   MetricNodeSchema,
   RailNodeSchema,
   SplitNodeSchema,
+  SurfaceFrameNodeSchema,
   TextBlockNodeSchema,
 } from "@shared/schemas";
 import { joinClassNames } from "./common";
+
+export const SurfaceFrame = createComponentImplementation(
+  {
+    name: "SurfaceFrame",
+    schema: SurfaceFrameNodeSchema.omit({ id: true, component: true }),
+  },
+  ({ props, buildChild }) => {
+    const childIds = props.children as string[];
+    return (
+      <div
+        className="a2ui-surface-frame"
+        data-recipe={props.recipeId}
+        data-density={props.density}
+        data-emphasis={props.emphasis}
+      >
+        {childIds.map((childId) => (
+          <div className="a2ui-surface-frame__module" key={childId}>
+            {buildChild(childId)}
+          </div>
+        ))}
+      </div>
+    );
+  },
+);
 
 export const EditorialHeading = createComponentImplementation(
   {
@@ -149,6 +174,7 @@ export const Divider = createComponentImplementation(
 );
 
 export const layoutComponents = [
+  SurfaceFrame,
   EditorialHeading,
   TextBlock,
   Metric,

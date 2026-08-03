@@ -1,7 +1,7 @@
 export const MODEL_ID = "gemini-3.6-flash" as const;
 export const A2UI_VERSION = "v0.9.1" as const;
 export const A2UI_PROTOCOL_VERSION = "0.9.1" as const;
-export const CATALOG_ID = "https://lab.jalbright.dev/catalogs/editorial/v0.9.1" as const;
+export const CATALOG_ID = "https://lab.jalbright.dev/catalogs/editorial/v2" as const;
 
 export const LIMITS = {
   promptCharacters: 1_000,
@@ -19,6 +19,7 @@ export const LIMITS = {
 } as const;
 
 export const TRUSTED_COMPONENT_NAMES = [
+  "SurfaceFrame",
   "EditorialHeading",
   "TextBlock",
   "Metric",
