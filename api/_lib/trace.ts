@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { TraceRecordSchema, type TraceRecord } from "../../shared/schemas.js";
 
 const SAFE_ARGUMENT_KEYS = new Set([
+  "location",
+  "locations",
   "units",
   "days",
   "hours",
@@ -34,10 +36,49 @@ function integerArgument(value: unknown, minimum: number, maximum: number): numb
     : undefined;
 }
 
+function coarseLocation(value: unknown): string | undefined {
+  const safe = safeScalar(value);
+  if (typeof safe !== "string" || !safe || safe.length > 80) return undefined;
+  if (/\[(?:email|redacted|coordinates)\]/.test(safe)) return undefined;
+  if (
+    /^\d+\s/.test(safe) ||
+    /\b\d{5}(?:-\d{4})?\b/.test(safe) ||
+    /[#@]/.test(safe) ||
+    /\b(?:street|st\.?|avenue|ave\.?|road|rd\.?|boulevard|blvd\.?|lane|ln\.?|drive|dr\.?)\b/i.test(
+      safe,
+    )
+  ) {
+    return undefined;
+  }
+  const parts = safe.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0 || parts.length > 3) return undefined;
+  return parts.join(", ");
+}
+
+function coarseLocations(values: readonly unknown[]): string | undefined {
+  const locations = [
+    ...new Set(
+      values
+        .slice(0, 4)
+        .map(coarseLocation)
+        .filter((location): location is string => Boolean(location)),
+    ),
+  ];
+  if (locations.length === 0) return undefined;
+  const rendered: string[] = [];
+  for (const location of locations) {
+    const candidate = [...rendered, location].join(" · ");
+    if (candidate.length > 200) break;
+    rendered.push(location);
+  }
+  return rendered.length > 0 ? rendered.join(" · ") : undefined;
+}
+
 function semanticArgument(
   key: string,
   value: unknown,
 ): string | number | boolean | null | undefined {
+  if (key === "location") return coarseLocation(value);
   if (key === "hours") return integerArgument(value, 1, 240);
   if (key === "days") return integerArgument(value, 1, 10);
   if (key === "durationHours") return integerArgument(value, 1, 6);
@@ -64,7 +105,13 @@ export function sanitizeTraceArguments(
   const output: Record<string, string | number | boolean | null> = {};
   for (const [key, value] of Object.entries(input)) {
     if (!SAFE_ARGUMENT_KEYS.has(key)) continue;
-    if (Array.isArray(value)) continue;
+    if (Array.isArray(value)) {
+      if (key === "locations") {
+        const safe = coarseLocations(value);
+        if (safe) output[key] = safe;
+      }
+      continue;
+    }
     const safe = semanticArgument(key, value);
     if (safe !== undefined) output[key] = safe;
   }

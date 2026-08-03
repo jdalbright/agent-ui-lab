@@ -140,13 +140,13 @@ describe("runGeminiRetrieval", () => {
     const weatherTool = (requests[0]?.tools as Array<Record<string, unknown>>).find(
       (tool) => tool.name === "get_weather_bundle",
     );
-    expect(weatherTool?.parameters).toMatchObject({
-      oneOf: [
-        expect.objectContaining({ required: ["location"] }),
-        expect.objectContaining({ required: ["locations"] }),
-        expect.objectContaining({ required: ["latitude", "longitude"] }),
-      ],
-    });
+    const parameters = weatherTool?.parameters as Record<string, unknown>;
+    expect(parameters.type).toBe("object");
+    expect(parameters.description).toBeTypeOf("string");
+    expect(parameters.description as string).toContain("exactly one");
+    expect(parameters.oneOf).toBeUndefined();
+    expect(JSON.stringify(parameters)).not.toContain('"not"');
+    expect(JSON.stringify(parameters)).not.toContain("uniqueItems");
   });
 
   it("passes four named comparison locations in one bounded weather request", async () => {
@@ -254,7 +254,41 @@ describe("runGeminiRetrieval", () => {
         executeWeather,
       }),
     ).rejects.toThrow("more than 4 weather tool calls");
-    expect(executeWeather).toHaveBeenCalledTimes(4);
+    expect(executeWeather).not.toHaveBeenCalled();
+  });
+
+  it("preflights aggregate locations for a batch before executing any weather provider", async () => {
+    const { client } = fakeClient([
+      {
+        id: "interaction-location-batch",
+        status: "requires_action",
+        steps: [
+          {
+            type: "function_call",
+            id: "weather-three",
+            name: "get_weather_bundle",
+            arguments: { locations: ["Raleigh, NC", "Seattle, WA", "Denver, CO"] },
+          },
+          {
+            type: "function_call",
+            id: "weather-two",
+            name: "get_weather_bundle",
+            arguments: { locations: ["Miami, FL", "Boston, MA"] },
+          },
+        ],
+      },
+    ]);
+    const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
+
+    await expect(
+      runGeminiRetrieval({
+        gemini: client,
+        prompt: "Compare five cities.",
+        clientContext,
+        executeWeather,
+      }),
+    ).rejects.toThrow("more than 4 weather locations");
+    expect(executeWeather).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -300,7 +334,7 @@ describe("runGeminiRetrieval", () => {
     expect(executeWeather).not.toHaveBeenCalled();
   });
 
-  it("rejects a requested target window that exceeds the 240-hour provider horizon", async () => {
+  it("defers target-horizon validation until the executor has provider timezone slots", async () => {
     const { client } = fakeClient([
       weatherArgumentsResponse("target-too-far", {
         locations: ["Denver, CO"],
@@ -313,15 +347,18 @@ describe("runGeminiRetrieval", () => {
     ]);
     const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
 
-    await expect(
-      runGeminiRetrieval({
-        gemini: client,
-        prompt: "Plan a six-hour run at 11:30 PM nine days from now in Denver.",
-        clientContext,
-        executeWeather,
+    await runGeminiRetrieval({
+      gemini: client,
+      prompt: "Plan a six-hour run at 11:30 PM nine days from now in Denver.",
+      clientContext,
+      executeWeather,
+    });
+    expect(executeWeather).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetLocalTime: "23:30",
+        targetDayOffset: 9,
       }),
-    ).rejects.toBeInstanceOf(GeminiProviderError);
-    expect(executeWeather).not.toHaveBeenCalled();
+    );
   });
 
   it("replays every signed step unchanged before the matching function result", async () => {

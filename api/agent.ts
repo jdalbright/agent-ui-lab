@@ -24,7 +24,11 @@ import {
   sanitizeTurnSummary,
   type TurnSummary,
 } from "./_lib/context-token.js";
-import { geocodeLocations, reverseGeocodeLocation } from "./_lib/geocoding.js";
+import {
+  geocodeLocations,
+  reverseGeocodeLocation,
+  type GeocodedLocation,
+} from "./_lib/geocoding.js";
 import {
   createGeminiProvider,
   GeminiProviderError,
@@ -141,12 +145,56 @@ function namedWeatherQueries(args: Readonly<GetWeatherBundleArguments>): string[
   return [...unique.values()];
 }
 
+function coarseResolvedLocationName(
+  resolved: GeocodedLocation | null | undefined,
+  fallback: string,
+): string {
+  if (!resolved) return fallback;
+  const locality = resolved.locality?.trim();
+  const region = resolved.region?.trim();
+  const country = resolved.countryCode?.trim().toUpperCase();
+  if (locality && region) return `${locality}, ${region}`;
+  if (locality && country) return `${locality}, ${country}`;
+  if (region && country) return `${region}, ${country}`;
+  const name = resolved.name.trim().replace(/\s+/g, " ");
+  const isRawAddress =
+    /^\d+\s/.test(name) ||
+    /\b(?:street|st\.?|avenue|ave\.?|road|rd\.?|boulevard|blvd\.?|lane|ln\.?|drive|dr\.?)\b/i.test(
+      name,
+    ) ||
+    /\b\d{5}(?:-\d{4})?\b/.test(name);
+  return !isRawAddress && name.length <= 80 ? name : fallback;
+}
+
+function targetForecastFetchHours(
+  targetLocalTime: string | undefined,
+  targetDayOffset: number,
+  durationHours: number,
+  requestedHours: number,
+): number {
+  if (!targetLocalTime) return requestedHours;
+  const [targetHour, targetMinute] = targetLocalTime.split(":").map(Number);
+  // This is only a bounded fetch budget. Exact validity is checked below against
+  // provider slots formatted in the provider-returned IANA time zone.
+  const conservativeSlots =
+    targetDayOffset * 24 +
+    targetHour +
+    durationHours +
+    (targetMinute > 0 ? 1 : 0) +
+    2;
+  return Math.max(requestedHours, Math.min(240, conservativeSlots));
+}
+
 export async function executeWeather(
   args: Readonly<GetWeatherBundleArguments>,
   request: AgentRequest,
   apiKey: string,
   signal: AbortSignal,
-): Promise<{ data: unknown; sources: readonly SourceRecord[] }> {
+): Promise<{
+  data: unknown;
+  sources: readonly SourceRecord[];
+  traceArguments: Readonly<Record<string, unknown>>;
+}> {
   let locations: WeatherLocation[] = [];
   const approvedCoordinates = request.client.coordinates;
   const namedQueries = namedWeatherQueries(args);
@@ -169,17 +217,13 @@ export async function executeWeather(
   if (args.targetLocalTime && args.targetDayOffset === undefined) {
     throw new RangeError("targetDayOffset is required with targetLocalTime.");
   }
-  const minimumTargetHours = args.targetLocalTime
-    ? (targetDayOffset + 1) * 24 +
-      durationHours -
-      1 +
-      (args.targetLocalTime.endsWith(":00") ? 0 : 1)
-    : 0;
-  if (minimumTargetHours > 240) {
-    throw new RangeError("The requested activity window exceeds the 240-hour forecast horizon.");
-  }
   const requestedHours = validatedInteger(args.hours, 24, 1, 240, "hours");
-  const hours = Math.max(requestedHours, minimumTargetHours);
+  const hours = targetForecastFetchHours(
+    args.targetLocalTime,
+    targetDayOffset,
+    durationHours,
+    requestedHours,
+  );
   const days = validatedInteger(args.days, 7, 1, 10, "days");
 
   if (approvedCoordinates && hasRequestedCoordinates && namedQueries.length === 0) {
@@ -189,7 +233,7 @@ export async function executeWeather(
     );
     locations = [
       {
-        name: resolved?.name || "Current location",
+        name: coarseResolvedLocationName(resolved, "Current location"),
         latitude: approvedCoordinates.latitude,
         longitude: approvedCoordinates.longitude,
         ...(resolved?.placeId ? { placeId: resolved.placeId } : {}),
@@ -204,11 +248,11 @@ export async function executeWeather(
     });
     if (resolvedLocations.length !== namedQueries.length) throw new LocationResolutionError();
     locations = resolvedLocations.map((resolved) => ({
-        name: resolved.name,
-        latitude: resolved.latitude,
-        longitude: resolved.longitude,
-        ...(resolved.placeId ? { placeId: resolved.placeId } : {}),
-      }));
+      name: coarseResolvedLocationName(resolved, "Resolved location"),
+      latitude: resolved.latitude,
+      longitude: resolved.longitude,
+      ...(resolved.placeId ? { placeId: resolved.placeId } : {}),
+    }));
   }
 
   if (locations.length === 0) throw new LocationResolutionError();
@@ -221,21 +265,35 @@ export async function executeWeather(
     hours,
     days,
   });
+  const activityWindows = scoreActivityWindows(bundle, {
+    activity: args.activity ?? "walk",
+    durationHours,
+    ...(args.targetLocalTime
+      ? {
+          targetLocalTime: args.targetLocalTime,
+          targetDayOffset,
+        }
+      : {}),
+  });
+  if (args.targetLocalTime && activityWindows.length !== bundle.locations.length) {
+    throw new RangeError(
+      "The requested local activity window is outside the provider forecast horizon or unavailable.",
+    );
+  }
   return {
-    data: {
-      ...bundle,
-      activityWindows: scoreActivityWindows(bundle, {
-        activity: args.activity ?? "walk",
-        durationHours,
-        ...(args.targetLocalTime
-          ? {
-              targetLocalTime: args.targetLocalTime,
-              targetDayOffset,
-            }
-          : {}),
-      }),
-    },
+    data: { ...bundle, activityWindows },
     sources: weatherSources(bundle),
+    traceArguments: Object.freeze({
+      locations: Object.freeze(locations.map((location) => location.name)),
+      units: args.units,
+      hours,
+      days,
+      activity: args.activity ?? "walk",
+      durationHours,
+      ...(args.targetLocalTime
+        ? { targetLocalTime: args.targetLocalTime, targetDayOffset }
+        : {}),
+    }),
   };
 }
 
@@ -418,7 +476,7 @@ export default async function handler(request: ServerRequest, response: ServerRe
             label: "Get weather bundle",
             status: "complete",
             toolName: evidence.tool,
-            arguments: evidence.arguments,
+            arguments: evidence.traceArguments ?? evidence.arguments,
             sourceIds: sources.filter((source) => source.provider === "google-weather").map((source) => source.id),
           }),
         });

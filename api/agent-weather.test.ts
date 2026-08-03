@@ -61,6 +61,7 @@ function bundle(
   locations: readonly WeatherLocation[],
   hourly: readonly NormalizedHourlyForecast[] = [hour("2026-08-01T18:00:00.000Z")],
   timeZone = "America/New_York",
+  observedAt = "2026-08-01T18:00:00.000Z",
 ): WeatherBundle {
   return {
     units: "imperial",
@@ -74,7 +75,7 @@ function bundle(
       units: "imperial",
       fetchedAt: "2026-08-01T18:00:00.000Z",
       current: {
-        observedAt: "2026-08-01T18:00:00.000Z",
+        observedAt,
         timeZone,
         temperature: 70,
         feelsLike: 70,
@@ -107,7 +108,7 @@ type ExecuteWeather = (
   request: AgentRequest,
   apiKey: string,
   signal: AbortSignal,
-) => Promise<{ data: unknown }>;
+) => Promise<{ data: unknown; traceArguments?: Readonly<Record<string, unknown>> }>;
 
 const executeWeather = (agentModule as unknown as { executeWeather: ExecuteWeather }).executeWeather;
 
@@ -139,6 +140,35 @@ describe("executeWeather", () => {
     });
     expect(providerMocks.getWeatherBundle).toHaveBeenCalledWith(
       expect.objectContaining({ locations: [seattle], hours: 24, days: 7, units: "metric" }),
+    );
+  });
+
+  it("reports the resolved coarse place name without exposing the raw address", async () => {
+    const resolved = {
+      query: "123 Main Street, Seattle, WA 98101",
+      name: "123 Main Street, Seattle, WA 98101, USA",
+      locality: "Seattle",
+      region: "WA",
+      countryCode: "US",
+      latitude: 47.6062,
+      longitude: -122.3321,
+      types: ["street_address"],
+    };
+    const seattle = { name: "Seattle, WA", latitude: 47.6062, longitude: -122.3321 };
+    providerMocks.geocodeLocations.mockResolvedValue([resolved]);
+    providerMocks.getWeatherBundle.mockResolvedValue(bundle([seattle]));
+
+    const result = await executeWeather(
+      { location: resolved.query, units: "imperial" },
+      request,
+      "maps-key",
+      new AbortController().signal,
+    );
+
+    expect(result.traceArguments).toMatchObject({ locations: ["Seattle, WA"] });
+    expect(JSON.stringify(result.traceArguments)).not.toContain("123 Main");
+    expect(providerMocks.getWeatherBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ locations: [seattle] }),
     );
   });
 
@@ -200,7 +230,7 @@ describe("executeWeather", () => {
     );
 
     expect(providerMocks.getWeatherBundle).toHaveBeenCalledWith(
-      expect.objectContaining({ hours: 48, days: 2 }),
+      expect.objectContaining({ hours: 34, days: 2 }),
     );
     expect(result.data).toMatchObject({
       activityWindows: [
@@ -238,8 +268,19 @@ describe("executeWeather", () => {
 
   it("rejects target windows beyond the 240-hour forecast horizon", async () => {
     const denver = { name: "Denver, CO", latitude: 39.7392, longitude: -104.9903 };
+    const start = Date.parse("2026-10-24T04:00:00.000Z");
+    const forecast = Array.from({ length: 240 }, (_, index) =>
+      hour(new Date(start + index * 60 * 60 * 1_000).toISOString()),
+    );
     providerMocks.geocodeLocations.mockResolvedValue([denver]);
-    providerMocks.getWeatherBundle.mockResolvedValue(bundle([denver], [], "America/Denver"));
+    providerMocks.getWeatherBundle.mockResolvedValue(
+      bundle(
+        [denver],
+        forecast,
+        "America/New_York",
+        "2026-10-24T04:00:00.000Z",
+      ),
+    );
 
     await expect(
       executeWeather(
@@ -247,15 +288,82 @@ describe("executeWeather", () => {
           locations: ["Denver, CO"],
           units: "imperial",
           activity: "run",
-          durationHours: 6,
-          targetLocalTime: "23:30",
+          durationHours: 1,
+          targetLocalTime: "23:00",
           targetDayOffset: 9,
         },
         request,
         "maps-key",
         new AbortController().signal,
       ),
-    ).rejects.toThrow("240-hour");
-    expect(providerMocks.getWeatherBundle).not.toHaveBeenCalled();
+    ).rejects.toThrow("provider forecast horizon");
+    expect(providerMocks.getWeatherBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ hours: 240 }),
+    );
+  });
+
+  it("accepts the final fall-back provider slot and a spring-forward target", async () => {
+    const place = { name: "New York, NY", latitude: 40.7128, longitude: -74.006 };
+    providerMocks.geocodeLocations.mockResolvedValue([place]);
+
+    const fallStart = Date.parse("2026-10-24T04:00:00.000Z");
+    const fallForecast = Array.from({ length: 240 }, (_, index) =>
+      hour(new Date(fallStart + index * 60 * 60 * 1_000).toISOString()),
+    );
+    providerMocks.getWeatherBundle.mockResolvedValueOnce(
+      bundle(
+        [place],
+        fallForecast,
+        "America/New_York",
+        "2026-10-24T04:00:00.000Z",
+      ),
+    );
+
+    const fall = await executeWeather(
+      {
+        locations: ["New York, NY"],
+        units: "imperial",
+        activity: "walk",
+        durationHours: 1,
+        targetLocalTime: "22:00",
+        targetDayOffset: 9,
+      },
+      request,
+      "maps-key",
+      new AbortController().signal,
+    );
+    expect(fall.data).toMatchObject({
+      activityWindows: [{ startTime: "2026-11-03T03:00:00.000Z" }],
+    });
+
+    const springStart = Date.parse("2026-02-28T05:00:00.000Z");
+    const springForecast = Array.from({ length: 240 }, (_, index) =>
+      hour(new Date(springStart + index * 60 * 60 * 1_000).toISOString()),
+    );
+    providerMocks.getWeatherBundle.mockResolvedValueOnce(
+      bundle(
+        [place],
+        springForecast,
+        "America/New_York",
+        "2026-02-28T05:00:00.000Z",
+      ),
+    );
+
+    const spring = await executeWeather(
+      {
+        locations: ["New York, NY"],
+        units: "imperial",
+        activity: "walk",
+        durationHours: 1,
+        targetLocalTime: "23:00",
+        targetDayOffset: 9,
+      },
+      request,
+      "maps-key",
+      new AbortController().signal,
+    );
+    expect(spring.data).toMatchObject({
+      activityWindows: [{ startTime: "2026-03-10T03:00:00.000Z" }],
+    });
   });
 });

@@ -32,6 +32,18 @@ function hour(
   };
 }
 
+function hourlyRange(startTime: string, count: number): NormalizedHourlyForecast[] {
+  const start = Date.parse(startTime);
+  return Array.from({ length: count }, (_, index) => {
+    const slotStart = new Date(start + index * 60 * 60 * 1_000);
+    return {
+      ...hour(0),
+      startTime: slotStart.toISOString(),
+      endTime: new Date(slotStart.getTime() + 60 * 60 * 1_000).toISOString(),
+    };
+  });
+}
+
 describe("deterministic activity recommendations", () => {
   it("chooses the mild, dry two-hour walk window", () => {
     const hours = [
@@ -97,6 +109,51 @@ describe("deterministic activity recommendations", () => {
       endTime: "2026-08-02T14:00:00.000Z",
       durationHours: 1,
       label: "1-hour run window at requested time",
+    });
+  });
+
+  it("treats the final fall-back provider slot as the last valid one-hour target", () => {
+    const hours = hourlyRange("2026-10-24T04:00:00.000Z", 240);
+
+    const lastSlot = recommendActivityWindow(hours, {
+      activity: "walk",
+      durationHours: 1,
+      targetLocalTime: "22:00",
+      targetDayOffset: 9,
+      timeZone: "America/New_York",
+      referenceTime: "2026-10-24T04:00:00.000Z",
+    });
+    const beyondHorizon = recommendActivityWindow(hours, {
+      activity: "walk",
+      durationHours: 1,
+      targetLocalTime: "23:00",
+      targetDayOffset: 9,
+      timeZone: "America/New_York",
+      referenceTime: "2026-10-24T04:00:00.000Z",
+    });
+
+    expect(lastSlot).toMatchObject({
+      startTime: "2026-11-03T03:00:00.000Z",
+      endTime: "2026-11-03T04:00:00.000Z",
+    });
+    expect(beyondHorizon).toBeNull();
+  });
+
+  it("keeps a spring-forward day-nine target aligned to its local provider slot", () => {
+    const hours = hourlyRange("2026-02-28T05:00:00.000Z", 240);
+
+    const recommendation = recommendActivityWindow(hours, {
+      activity: "walk",
+      durationHours: 1,
+      targetLocalTime: "23:00",
+      targetDayOffset: 9,
+      timeZone: "America/New_York",
+      referenceTime: "2026-02-28T05:00:00.000Z",
+    });
+
+    expect(recommendation).toMatchObject({
+      startTime: "2026-03-10T03:00:00.000Z",
+      endTime: "2026-03-10T04:00:00.000Z",
     });
   });
 

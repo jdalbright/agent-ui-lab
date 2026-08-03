@@ -22,35 +22,9 @@ const WEATHER_TOOL = {
     "Gets normalized current conditions, requested hourly and daily forecasts, public alerts, and deterministic activity-window scores for one to four locations.",
   parameters: {
     type: "object",
+    description:
+      "Provide exactly one location mode: legacy location, locations with one to four names, or both latitude and longitude. The server rejects mixed or partial modes.",
     additionalProperties: false,
-    oneOf: [
-      {
-        required: ["location"],
-        not: {
-          anyOf: [
-            { required: ["locations"] },
-            { required: ["latitude"] },
-            { required: ["longitude"] },
-          ],
-        },
-      },
-      {
-        required: ["locations"],
-        not: {
-          anyOf: [
-            { required: ["location"] },
-            { required: ["latitude"] },
-            { required: ["longitude"] },
-          ],
-        },
-      },
-      {
-        required: ["latitude", "longitude"],
-        not: {
-          anyOf: [{ required: ["location"] }, { required: ["locations"] }],
-        },
-      },
-    ],
     properties: {
       location: {
         type: "string",
@@ -60,7 +34,6 @@ const WEATHER_TOOL = {
         type: "array",
         minItems: 1,
         maxItems: LIMITS.locations,
-        uniqueItems: true,
         items: { type: "string", minLength: 1, maxLength: 200 },
         description: "One to four named places, in the same order the user requested them.",
       },
@@ -207,20 +180,6 @@ const WeatherArgumentsInputSchema = z
         message: "targetDayOffset is required with targetLocalTime",
       });
     }
-    if (value.targetLocalTime && value.targetDayOffset !== undefined) {
-      const durationHours = value.durationHours ?? 2;
-      const requestedHours =
-        (value.targetDayOffset + 1) * 24 +
-        durationHours -
-        1 +
-        (value.targetLocalTime.endsWith(":00") ? 0 : 1);
-      if (requestedHours > 240) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "the requested activity window exceeds the 240-hour forecast horizon",
-        });
-      }
-    }
   });
 
 export interface GeminiInteraction
@@ -268,6 +227,7 @@ export interface GetWeatherBundleArguments {
 export interface WeatherToolExecutionResult {
   data: unknown;
   sources?: readonly SourceRecord[];
+  traceArguments?: Readonly<Record<string, unknown>>;
 }
 
 export type WeatherToolExecutor = (
@@ -277,6 +237,7 @@ export type WeatherToolExecutor = (
 export interface WeatherEvidence {
   tool: "get_weather_bundle";
   arguments: Readonly<GetWeatherBundleArguments>;
+  traceArguments?: Readonly<Record<string, unknown>>;
   result: unknown;
 }
 
@@ -578,24 +539,35 @@ export async function runGeminiRetrieval({
     if (toolRounds >= LIMITS.toolRounds) throw new GeminiToolRoundLimitError();
     toolRounds += 1;
 
-    for (const functionCall of functionCalls) {
+    const weatherCalls = functionCalls.map((functionCall) => {
       if (functionCall.name !== "get_weather_bundle") {
         throw new GeminiProviderError(`Gemini requested an unsupported function: ${functionCall.name}`);
       }
+      return {
+        functionCall,
+        arguments: validateWeatherArguments(functionCall.arguments, clientContext.units),
+      };
+    });
+    const nextWeatherToolCalls = weatherToolCalls + weatherCalls.length;
+    if (nextWeatherToolCalls > LIMITS.locations) {
+      throw new GeminiProviderError(
+        `Gemini requested more than ${LIMITS.locations} weather tool calls.`,
+      );
+    }
+    const batchLocations = weatherCalls.reduce(
+      (total, call) => total + weatherLocationCount(call.arguments),
+      0,
+    );
+    const nextWeatherLocations = weatherLocations + batchLocations;
+    if (nextWeatherLocations > LIMITS.locations) {
+      throw new GeminiProviderError(
+        `Gemini requested more than ${LIMITS.locations} weather locations.`,
+      );
+    }
+    weatherToolCalls = nextWeatherToolCalls;
+    weatherLocations = nextWeatherLocations;
 
-      const arguments_ = validateWeatherArguments(functionCall.arguments, clientContext.units);
-      weatherToolCalls += 1;
-      if (weatherToolCalls > LIMITS.locations) {
-        throw new GeminiProviderError(
-          `Gemini requested more than ${LIMITS.locations} weather tool calls.`,
-        );
-      }
-      weatherLocations += weatherLocationCount(arguments_);
-      if (weatherLocations > LIMITS.locations) {
-        throw new GeminiProviderError(
-          `Gemini requested more than ${LIMITS.locations} weather locations.`,
-        );
-      }
+    for (const { functionCall, arguments: arguments_ } of weatherCalls) {
       const execution = await executeWeather(arguments_);
       const normalizedSources = normalizeWeatherSources(execution.sources);
       weatherSources.push(...normalizedSources);
@@ -603,6 +575,7 @@ export async function runGeminiRetrieval({
         Object.freeze({
           tool: "get_weather_bundle" as const,
           arguments: arguments_,
+          ...(execution.traceArguments ? { traceArguments: execution.traceArguments } : {}),
           result: execution.data,
         }),
       );

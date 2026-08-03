@@ -21,6 +21,8 @@ describe("sanitizeTraceArguments", () => {
         providerSteps: ["hidden"],
       }),
     ).toEqual({
+      location: "Raleigh, NC",
+      locations: "Raleigh, NC · Seattle, WA",
       units: "imperial",
       days: 5,
       hours: 24,
@@ -43,6 +45,20 @@ describe("sanitizeTraceArguments", () => {
       query: "Email [email] with [redacted] from [coordinates]",
     });
     expect(JSON.stringify(result)).not.toMatch(/jacob|private-value|secret-value|35\.7796/);
+  });
+
+  it("keeps only coarse place names and drops raw addresses or coordinates", () => {
+    expect(
+      sanitizeTraceArguments({
+        location: "123 Main Street, Raleigh, NC 27601",
+        locations: [
+          "Seattle, WA",
+          "1600 Pennsylvania Avenue NW, Washington, DC 20500",
+          "35.7796, -78.6382",
+          "Denver, CO",
+        ],
+      }),
+    ).toEqual({ locations: "Seattle, WA · Denver, CO" });
   });
 
   it("drops unsupported values and bounds displayed values", () => {
@@ -75,7 +91,7 @@ describe("createTrace", () => {
     });
 
     expect(trace.id).toBeTruthy();
-    expect(trace.arguments).toBeUndefined();
+    expect(trace.arguments).toEqual({ location: "Raleigh, NC" });
     expect(JSON.stringify(trace)).not.toContain("private-key");
   });
 });
