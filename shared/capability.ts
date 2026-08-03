@@ -57,7 +57,7 @@ const WEATHER_COMPARISON_SHAPES =
 const WEATHER_ACTIVITY_SHAPES =
   /\b(what should i wear|best (?:time|window)|good (?:time|day)|outdoor brunch|walk|run|hike)\b/i;
 const RESEARCH_TERMS =
-  /\b(research|official sources?|official[\s\w.-]{0,40}source|official (?:polic(?:y|ies)|documentation|project pages?)|cite|sources? and cite|timeline|evidence for|what changed|release and support statuses?|current[\s\w-]{0,40}requirements?|today'?s news)\b/i;
+  /\b(research|official sources?|official[\s\w.-]{0,40}source|official (?:polic(?:y|ies)|documentation|project pages?)|cite|sources? and cite|timeline|evidence (?:for|supports?|challenges?)|what changed|release and support statuses?|current[\s\w-]{0,40}requirements?|today'?s news)\b/i;
 const COMPARISON_TERMS =
   /\b(compare|comparison|versus|\bvs\.?\b|differences?|score)\b|\bwhich\b[\s\S]{0,80}\bbetter\b/i;
 

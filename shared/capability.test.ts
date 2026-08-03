@@ -120,6 +120,19 @@ describe("classifyCapability", () => {
     });
   });
 
+  it("grounds a claim review that asks for supporting and challenging evidence", () => {
+    expect(
+      classifyCapability(
+        "What evidence supports and challenges Pluto’s classification as a dwarf planet?",
+      ),
+    ).toMatchObject({
+      route: "search",
+      toolPolicy: "search",
+      surfaceKind: "research",
+      reason: "grounded-research",
+    });
+  });
+
   it.each([
     ["Can you send an email to my landlord?", "external-write"],
     ["Should I sue my employer for this?", "legal-personalized"],
