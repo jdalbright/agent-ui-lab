@@ -137,6 +137,10 @@ function allSurfaceText(spec: LooseSurfaceSpec): string {
       strings.push(value);
       return;
     }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      strings.push(String(value));
+      return;
+    }
     if (Array.isArray(value)) {
       for (const item of value) collect(item);
       return;

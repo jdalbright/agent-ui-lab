@@ -915,6 +915,49 @@ describe("weather-backed comparison integrity", () => {
     if (!validation.success) expect(validation.issues.join(" ")).toMatch(/Asheville/i);
   });
 
+  it("extracts locations after a weather-for phrase without treating weather as a city", () => {
+    const { retrieval, plan } = weatherComparisonFixture();
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations[1].location = {
+      name: "Durham, NC",
+      latitude: 35.994,
+      longitude: -78.8986,
+      placeId: "durham-place",
+    };
+    const validation = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt: "Compare the weather for Raleigh and Charlotte.",
+      clientContext,
+    });
+
+    expect(validation.success).toBe(false);
+    if (!validation.success) {
+      expect(validation.issues.join(" ")).toMatch(/Charlotte/i);
+      expect(validation.issues.join(" ")).not.toMatch(/missing from evidence: weather/i);
+    }
+  });
+
+  it("extracts locations from a versus prompt without a compare verb", () => {
+    const { retrieval, plan } = weatherComparisonFixture();
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations[1].location = {
+      name: "Durham, NC",
+      latitude: 35.994,
+      longitude: -78.8986,
+      placeId: "durham-place",
+    };
+    const validation = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt: "Raleigh vs Asheville for brunch.",
+      clientContext,
+    });
+
+    expect(validation.success).toBe(false);
+    if (!validation.success) expect(validation.issues.join(" ")).toMatch(/Asheville/i);
+  });
+
   it("rejects a Monday-to-Friday request represented by only two daily records", () => {
     const { retrieval, plan } = weatherComparisonFixture();
     const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
@@ -1017,12 +1060,16 @@ describe("weather-backed comparison integrity", () => {
 });
 
 describe("requested comparison coverage", () => {
-  it("rejects a scorecard that omits explicitly requested warranty and repairability criteria", () => {
+  it.each([
+    "Compare Framework A and Framework B on warranty length and repairability.",
+    "Compare Framework A and Framework B for warranty length and repairability.",
+    "Framework A versus Framework B: warranty length and repairability.",
+  ])("rejects a scorecard that omits explicitly requested criteria: %s", (prompt) => {
     const plan = structuredClone(plansByRecipe["comparison.scorecard"]);
     const validation = validateSurfacePlan(plan, {
       sources: searchSources,
       evidence: [],
-      prompt: "Compare Framework A and Framework B on warranty length and repairability.",
+      prompt,
       clientContext,
     });
 
@@ -1039,8 +1086,9 @@ describe("compileSurfacePlan", () => {
     const hero = (plan.modules as Array<Record<string, unknown>>).find(
       (module) => module.type === "hero",
     );
-    hero!.recommendationValue = "9999°F tomorrow";
-    hero!.recommendationDetail = "Expect 9999 degrees with a 1000 mph breeze.";
+    hero!.recommendationLabel = "Tomorrow";
+    hero!.recommendationValue = "Tomorrow will be 81°F";
+    hero!.recommendationDetail = "Meet at 7 PM, when the evidence-matched window begins.";
 
     const spec = compileSurfacePlan({
       plan: SurfacePlanSchema.parse(plan),
@@ -1050,11 +1098,12 @@ describe("compileSurfacePlan", () => {
     const compiledHero = spec.components.find((node) => node.component === "WeatherHero");
 
     expect(compiledHero).toMatchObject({
+      recommendationLabel: "Current conditions",
       recommendationValue: "Partly cloudy",
       recommendationDetail: "Provider-observed conditions for Raleigh, NC.",
     });
-    expect(JSON.stringify(compiledHero)).not.toContain("9999");
-    expect(JSON.stringify(compiledHero)).not.toContain("1000");
+    expect(JSON.stringify(compiledHero)).not.toContain("Tomorrow will be 81°F");
+    expect(JSON.stringify(compiledHero)).not.toContain("7 PM");
   });
 
   it("deterministically compiles semantic plan choices into a trusted SurfaceSpec", () => {
