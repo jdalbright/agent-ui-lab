@@ -1,8 +1,11 @@
-import { ChartNoAxesColumnIncreasing, CloudSun, FileText } from "lucide-react";
-import { useId } from "react";
+import { ChartNoAxesColumnIncreasing, ChevronDown, CloudSun, FileText } from "lucide-react";
+import { useId, useState } from "react";
 import type { ReactNode } from "react";
 
-import { DEFAULT_PROMPT_SUGGESTIONS } from "./promptSuggestions";
+import {
+  DEFAULT_PROMPT_SUGGESTIONS,
+  MORE_EXAMPLE_PROMPT_SUGGESTIONS,
+} from "./promptSuggestions";
 import type { PromptSuggestion } from "./promptSuggestions";
 import "./shell.css";
 
@@ -22,6 +25,10 @@ export function EmptyState({
   composer,
 }: EmptyStateProps) {
   const headingId = useId();
+  const moreExamplesId = useId();
+  const [moreExamplesOpen, setMoreExamplesOpen] = useState(false);
+  const moreExamples =
+    suggestions === DEFAULT_PROMPT_SUGGESTIONS ? MORE_EXAMPLE_PROMPT_SUGGESTIONS : [];
   const suggestionIcon = (label: string) => {
     if (label === "Weather") return <CloudSun aria-hidden="true" />;
     if (label === "Comparison") return <ChartNoAxesColumnIncreasing aria-hidden="true" />;
@@ -60,6 +67,61 @@ export function EmptyState({
               </span>
             </button>
           ))}
+        </div>
+      ) : null}
+
+      {moreExamples.length > 0 ? (
+        <div className="agent-empty-state__more-examples">
+          <button
+            className="agent-empty-state__more-toggle"
+            type="button"
+            aria-expanded={moreExamplesOpen}
+            aria-controls={moreExamplesId}
+            onClick={() => setMoreExamplesOpen((isOpen) => !isOpen)}
+          >
+            <span>More examples</span>
+            <ChevronDown
+              className="agent-empty-state__more-chevron"
+              aria-hidden="true"
+              data-open={moreExamplesOpen}
+            />
+          </button>
+
+          {moreExamplesOpen ? (
+            <div
+              id={moreExamplesId}
+              className="agent-empty-state__more-region"
+              role="group"
+              aria-label="More examples"
+            >
+              {moreExamples.map((suggestion) => (
+                <button
+                  className="agent-empty-state__suggestion agent-empty-state__suggestion--secondary"
+                  type="button"
+                  key={suggestion.id}
+                  onClick={() => onSelectSuggestion(suggestion)}
+                >
+                  <span className="agent-empty-state__suggestion-icon">
+                    {suggestionIcon(suggestion.label)}
+                  </span>
+                  <span className="agent-empty-state__suggestion-copy">
+                    <span className="agent-empty-state__suggestion-label">{suggestion.prompt}</span>
+                    <span className="agent-empty-state__suggestion-category">
+                      {suggestion.label}
+                    </span>
+                    {suggestion.description ? (
+                      <span className="agent-empty-state__suggestion-description">
+                        {suggestion.description}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="agent-empty-state__suggestion-arrow" aria-hidden="true">
+                    →
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>

@@ -136,6 +136,7 @@
 .agent-prompt-composer__field:focus-visible,
 .agent-prompt-composer__submit:focus-visible,
 .agent-empty-state__suggestion:focus-visible,
+.agent-empty-state__more-toggle:focus-visible,
 .agent-inspector__close:focus-visible,
 .agent-inspector__tab:focus-visible,
 .agent-inspector__panel:focus-visible {
@@ -391,6 +392,64 @@
 .agent-empty-state__suggestion:hover .agent-empty-state__suggestion-arrow {
   color: var(--agent-accent);
   transform: translate(3px, -50%);
+}
+
+.agent-empty-state__more-examples {
+  width: min(100%, 760px);
+  margin: 14px auto 0;
+}
+
+.agent-empty-state__more-toggle {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 2px;
+  margin-left: auto;
+  border: 0;
+  color: var(--agent-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.agent-empty-state__more-toggle:hover {
+  color: var(--agent-ink);
+}
+
+.agent-empty-state__more-chevron {
+  width: 16px;
+  height: 16px;
+  transition: transform 180ms ease;
+}
+
+.agent-empty-state__more-chevron[data-open="true"] {
+  transform: rotate(180deg);
+}
+
+.agent-empty-state__more-region {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 28px;
+  margin-top: 10px;
+  border-top: 1px solid var(--agent-rule);
+}
+
+.agent-empty-state__suggestion--secondary {
+  min-height: 104px;
+  align-items: flex-start;
+  padding-block: 18px;
+}
+
+@media (min-width: 721px) {
+  .agent-empty-state__more-region > .agent-empty-state__suggestion:nth-last-child(-n+2) {
+    border-bottom: 0;
+  }
 }
 
 .agent-live-status {
@@ -971,6 +1030,8 @@
   .agent-prompt-composer__submit,
   .agent-empty-state__suggestion,
   .agent-empty-state__suggestion-arrow,
+  .agent-empty-state__more-toggle,
+  .agent-empty-state__more-chevron,
   .agent-inspector-backdrop,
   .agent-inspector,
   .agent-inspector__close {
@@ -1130,6 +1191,10 @@
   border-bottom: 0;
 }
 
+.agent-empty-state__more-examples {
+  width: min(100%, 954px);
+}
+
 .agent-empty-state__suggestion {
   min-height: 88px;
   gap: 28px;
@@ -1249,6 +1314,15 @@
   .agent-empty-state__suggestions,
   .agent-empty-state__composer + .agent-empty-state__suggestions {
     margin-top: 39px;
+  }
+
+  .agent-empty-state__more-region {
+    grid-template-columns: 1fr;
+    column-gap: 0;
+  }
+
+  .agent-empty-state__suggestion--secondary {
+    min-height: 92px;
   }
 
   .agent-empty-state__suggestion {
