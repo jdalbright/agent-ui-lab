@@ -109,6 +109,18 @@ describe("classifyCapability", () => {
   });
 
   it.each([
+    "Which airline has the better carry-on policy: Southwest or Delta?",
+    "Compare React and Angular for an A2UI v0.9.1 client across setup and accessibility.",
+  ])("grounds a concrete non-weather comparison through Search: %s", (prompt) => {
+    expect(classifyCapability(prompt)).toMatchObject({
+      route: "search",
+      toolPolicy: "search",
+      surfaceKind: "comparison",
+      reason: "grounded-comparison",
+    });
+  });
+
+  it.each([
     ["Can you send an email to my landlord?", "external-write"],
     ["Should I sue my employer for this?", "legal-personalized"],
     ["Diagnose my symptoms and tell me what medication to take.", "medical-personalized"],

@@ -58,7 +58,8 @@ const WEATHER_ACTIVITY_SHAPES =
   /\b(what should i wear|best (?:time|window)|good (?:time|day)|outdoor brunch|walk|run|hike)\b/i;
 const RESEARCH_TERMS =
   /\b(research|official sources?|official[\s\w.-]{0,40}source|official (?:polic(?:y|ies)|documentation|project pages?)|cite|sources? and cite|timeline|evidence for|what changed|release and support statuses?|current[\s\w-]{0,40}requirements?|today'?s news)\b/i;
-const COMPARISON_TERMS = /\b(compare|comparison|versus|\bvs\.?\b|which is better)\b/i;
+const COMPARISON_TERMS =
+  /\b(compare|comparison|versus|\bvs\.?\b|differences?|score)\b|\bwhich\b[\s\S]{0,80}\bbetter\b/i;
 
 const MEDICAL_EMERGENCY =
   /\b(crushing chest pain|chest pain[\s\S]{0,80}(?:trouble breathing|shortness of breath)|trouble breathing[\s\S]{0,80}chest pain|cannot breathe|can'?t breathe|stroke symptoms?|severe bleeding|unconscious|overdose)\b/i;
@@ -186,7 +187,7 @@ export function classifyCapability(
     return decision("clarification", "none", "narrative", "comparison-context-required");
   }
 
-  if (RESEARCH_TERMS.test(prompt)) {
+  if (RESEARCH_TERMS.test(prompt) || COMPARISON_TERMS.test(prompt)) {
     const comparison = COMPARISON_TERMS.test(prompt);
     return decision(
       "search",
