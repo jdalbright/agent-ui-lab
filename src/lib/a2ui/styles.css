@@ -15,6 +15,12 @@
   min-inline-size: 0;
 }
 
+/* A2UI v0.9.1 briefly renders an inline gray loading placeholder while a
+   streamed root resolves. Keep that preview-owned state WCAG AA compliant. */
+.a2ui-surface > div[style*="color: gray"] {
+  color: var(--a2ui-muted) !important;
+}
+
 .a2ui-surface *,
 .a2ui-surface *::before,
 .a2ui-surface *::after {

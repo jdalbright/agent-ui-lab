@@ -34,6 +34,13 @@ async function expectNoDocumentOverflow(page: Page) {
 }
 
 async function expectNoSeriousA11yViolations(page: Page) {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    const finiteAnimations = document
+      .getAnimations()
+      .filter((animation) => animation.effect?.getTiming().iterations !== Infinity);
+    await Promise.allSettled(finiteAnimations.map((animation) => animation.finished));
+  });
   const result = await new AxeBuilder({ page }).analyze();
   const serious = result.violations.filter(
     (violation) => violation.impact === "serious" || violation.impact === "critical",
@@ -42,7 +49,11 @@ async function expectNoSeriousA11yViolations(page: Page) {
     serious.map((violation) => ({
       id: violation.id,
       impact: violation.impact,
-      targets: violation.nodes.flatMap((node) => node.target),
+      nodes: violation.nodes.map((node) => ({
+        target: node.target,
+        html: node.html,
+        failureSummary: node.failureSummary,
+      })),
     })),
   ).toEqual([]);
 }
