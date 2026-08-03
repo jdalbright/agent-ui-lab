@@ -958,6 +958,34 @@ describe("weather-backed comparison integrity", () => {
     if (!validation.success) expect(validation.issues.join(" ")).toMatch(/Asheville/i);
   });
 
+  it("extracts every city from a comma-separated plain compare list", () => {
+    const { retrieval, plan } = weatherComparisonFixture();
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations.push({
+      ...structuredClone(result.locations[1]),
+      location: {
+        name: "Durham, NC",
+        latitude: 35.994,
+        longitude: -78.8986,
+        placeId: "durham-place",
+      },
+    });
+    for (const module of plan.modules as Array<Record<string, unknown>>) {
+      if (module.type === "summary" || module.type === "chart" || module.type === "table") {
+        module.locationIndexes = [0, 1, 2];
+      }
+    }
+    const validation = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt: "Compare Raleigh, Charlotte, and Asheville weather.",
+      clientContext,
+    });
+
+    expect(validation.success).toBe(false);
+    if (!validation.success) expect(validation.issues.join(" ")).toMatch(/Asheville/i);
+  });
+
   it("rejects a Monday-to-Friday request represented by only two daily records", () => {
     const { retrieval, plan } = weatherComparisonFixture();
     const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
@@ -1063,6 +1091,7 @@ describe("requested comparison coverage", () => {
   it.each([
     "Compare Framework A and Framework B on warranty length and repairability.",
     "Compare Framework A and Framework B for warranty length and repairability.",
+    "Compare Framework A and Framework B for repairability.",
     "Framework A versus Framework B: warranty length and repairability.",
   ])("rejects a scorecard that omits explicitly requested criteria: %s", (prompt) => {
     const plan = structuredClone(plansByRecipe["comparison.scorecard"]);

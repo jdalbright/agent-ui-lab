@@ -767,6 +767,7 @@ function extractRequestedCriteria(prompt: string): string[] {
   )?.[1];
   const forMatch = /\bfor\s+([^?.:]+)$/.exec(normalized);
   const forClause = forMatch?.[1];
+  const rawForClause = /\bfor\s+([^?.:]+)[?.!]*$/i.exec(prompt.trim())?.[1]?.trim();
   const forParts = forClause
     ? forClause.split(/,|\band\b|\bversus\b|\bvs\.?\b/).map((value) => value.trim()).filter(Boolean)
     : [];
@@ -775,12 +776,19 @@ function extractRequestedCriteria(prompt: string): string[] {
     beforeFor,
   );
   const forNamesActivitiesOrDates = forParts.some((value) =>
-    /^(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|weekend|brunch|dinner|walk(?:ing)?|run(?:ning)?|jog(?:ging)?|hik(?:e|ing)|bik(?:e|ing)|cycl(?:e|ing)|golf|outdoor(?:\s+.+)?)$/.test(
+    /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|weekend|brunch|dinner|walk(?:ing)?|run(?:ning)?|jog(?:ging)?|hik(?:e|ing)|bik(?:e|ing)|cycl(?:e|ing)|golf|outdoors?)\b/.test(
       value,
     ),
   );
+  const singleForLooksLikeLocation =
+    forParts.length === 1 &&
+    rawForClause !== undefined &&
+    /^[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*)*(?:,\s*[A-Z]{2})?$/.test(rawForClause);
   const explicitForCriteria =
-    forParts.length >= 2 && !forNamesWeatherLocations && !forNamesActivitiesOrDates
+    forParts.length >= 1 &&
+    !forNamesWeatherLocations &&
+    !forNamesActivitiesOrDates &&
+    !singleForLooksLikeLocation
       ? forClause
       : undefined;
   const explicit =
@@ -799,7 +807,7 @@ function extractRequestedCriteria(prompt: string): string[] {
     .map((value) => value.replace(/^(?:the|their|its)\s+/, "").trim())
     .filter((value) => value.length >= 2 && value.length <= 48)
     .slice(0, 6);
-  if (cleaned.length >= 2) return [...new Set(cleaned)];
+  if (cleaned.length >= 1) return [...new Set(cleaned)];
 
   const knownCriteria = [
     "price",
@@ -1580,7 +1588,7 @@ function requestedPromptLocations(prompt: string | undefined): string[] {
   const candidates: string[] = [];
   const addList = (value: string | undefined): void => {
     if (!value) return;
-    candidates.push(...value.split(/,|\band\b/i));
+    candidates.push(...value.split(/,|\band\b|\bversus\b|\bvs\.?\b/i));
   };
   const score = /\b(?:score|rank)\s+(.+?)\s+(?:for|on|by|across|using)\b/i.exec(prompt)?.[1];
   addList(score);
@@ -1593,14 +1601,17 @@ function requestedPromptLocations(prompt: string | undefined): string[] {
   if (weatherFor) {
     addList(weatherFor.replace(/\s+(?:for|on|during)\s+.+$/i, ""));
   } else {
-    const binary =
-      /\bcompare\s+([A-Za-z][A-Za-z .'-]{1,79}?)\s+(?:versus|vs\.?|and)\s+([A-Za-z][A-Za-z .'-]{1,79}?)(?=\s+(?:for|on|during|this|next|over|across|weather|conditions?|forecasts?|temperatures?)\b|[?.:]|$)/i.exec(
-        prompt,
-      ) ??
-      /^\s*([A-Za-z][A-Za-z .'-]{1,79}?)\s+(?:versus|vs\.?)\s+([A-Za-z][A-Za-z .'-]{1,79}?)(?=\s+(?:for|on|during|this|next|over|across|weather|conditions?|forecasts?|temperatures?)\b|[?.:]|$)/i.exec(
+    const compareList = /\bcompare\s+(.+?)(?=\s+(?:for|on|during|from|this|next|over|across|weather|conditions?|forecasts?|temperatures?|highs?|lows?)\b|[?.:]|$)/i.exec(
+      prompt,
+    )?.[1];
+    if (compareList) {
+      addList(compareList);
+    } else {
+      const binary = /^\s*([A-Za-z][A-Za-z .'-]{1,79}?)\s+(?:versus|vs\.?)\s+([A-Za-z][A-Za-z .'-]{1,79}?)(?=\s+(?:for|on|during|from|this|next|over|across|weather|conditions?|forecasts?|temperatures?)\b|[?.:]|$)/i.exec(
         prompt,
       );
-    if (binary) candidates.push(binary[1], binary[2]);
+      if (binary) candidates.push(binary[1], binary[2]);
+    }
   }
 
   const locations = candidates.map((part) =>
