@@ -7,6 +7,14 @@ import {
   type GeminiClient,
   type GeminiRetrievalResult,
 } from "./gemini.js";
+import {
+  SURFACE_RECIPES,
+  SurfacePlanSchema,
+  buildFallbackSurfacePlan,
+  compileSurfacePlan,
+  validateSurfacePlan,
+  type SurfacePlan,
+} from "./surface-plan.js";
 
 type JsonSchema = Record<string, unknown>;
 type TrustedComponentName = (typeof TRUSTED_COMPONENT_NAMES)[number];
@@ -676,4 +684,445 @@ export async function composeSurfaceSpec({
   }
 
   throw new CompositionValidationError(lastFailure?.issues ?? ["Unknown composition failure."]);
+}
+
+type PlanKind = "weather" | "comparison" | "research";
+
+const PLAN_RECIPES_BY_KIND = {
+  weather: ["weather.snapshot", "weather.decision", "weather.outlook"],
+  comparison: ["comparison.verdict", "comparison.scorecard", "comparison.trend"],
+  research: ["research.brief", "research.timeline", "research.claims"],
+} as const satisfies Record<PlanKind, readonly SurfacePlan["recipeId"][]>;
+
+const planIndexSchema: JsonSchema = { type: "integer", minimum: 0 };
+const planIndexesSchema = (minimum: number, maximum: number): JsonSchema =>
+  arraySchema(planIndexSchema, minimum, maximum);
+
+const planSourceModuleSchema = strictObject(
+  {
+    type: enumSchema(["sources"]),
+    label: boundedString(80),
+    sourceIds: sourceIdsSchema,
+  },
+  ["type", "label", "sourceIds"],
+);
+
+const PLAN_MODULE_SCHEMAS_BY_KIND: Record<PlanKind, readonly JsonSchema[]> = {
+  weather: [
+    strictObject(
+      {
+        type: enumSchema(["hero"]),
+        variant: enumSchema(["snapshot", "decision"]),
+        locationIndex: planIndexSchema,
+        recommendationLabel: boundedString(80),
+        recommendationValue: boundedString(120),
+        recommendationDetail: boundedString(240),
+      },
+      [
+        "type",
+        "variant",
+        "locationIndex",
+        "recommendationLabel",
+        "recommendationValue",
+        "recommendationDetail",
+      ],
+    ),
+    strictObject(
+      {
+        type: enumSchema(["recommendation"]),
+        locationIndex: planIndexSchema,
+        activityWindowIndex: planIndexSchema,
+      },
+      ["type", "locationIndex", "activityWindowIndex"],
+    ),
+    strictObject(
+      {
+        type: enumSchema(["hourly"]),
+        variant: enumSchema(["strip", "chart"]),
+        label: boundedString(80),
+        locationIndex: planIndexSchema,
+        hourIndexes: planIndexesSchema(2, 24),
+      },
+      ["type", "variant", "label", "locationIndex", "hourIndexes"],
+    ),
+    strictObject(
+      {
+        type: enumSchema(["daily"]),
+        variant: enumSchema(["cards", "table"]),
+        label: boundedString(80),
+        locationIndex: planIndexSchema,
+        dayIndexes: planIndexesSchema(1, 10),
+      },
+      ["type", "variant", "label", "locationIndex", "dayIndexes"],
+    ),
+    strictObject(
+      {
+        type: enumSchema(["alerts"]),
+        locationIndex: planIndexSchema,
+        alertIndexes: planIndexesSchema(1, 8),
+      },
+      ["type", "locationIndex", "alertIndexes"],
+    ),
+    strictObject(
+      {
+        type: enumSchema(["metrics"]),
+        locationIndex: planIndexSchema,
+        metrics: arraySchema(
+          enumSchema(["feelsLike", "humidity", "wind", "uv", "visibility", "precipitation"]),
+          1,
+          6,
+        ),
+      },
+      ["type", "locationIndex", "metrics"],
+    ),
+    planSourceModuleSchema,
+  ],
+  comparison: [
+    strictObject(
+      {
+        type: enumSchema(["summary"]),
+        variant: enumSchema(["verdict", "balanced"]),
+        title: boundedString(180),
+        recommendation: boundedString(400),
+        items: arraySchema(comparisonItemSchema, 2, 4),
+        sourceIds: sourceIdsSchema,
+      },
+      ["type", "variant", "title", "recommendation", "items", "sourceIds"],
+    ),
+    strictObject(
+      {
+        type: enumSchema(["table"]),
+        caption: boundedString(160),
+        columns: arraySchema(boundedString(80), 2, 6),
+        rows: arraySchema(arraySchema(optionalBoundedString(160), 2, 6), 1, 12),
+        sourceIds: sourceIdsSchema,
+      },
+      ["type", "caption", "columns", "rows", "sourceIds"],
+    ),
+    strictObject(
+      {
+        type: enumSchema(["chart"]),
+        variant: enumSchema(["line", "bar"]),
+        title: boundedString(160),
+        labels: arraySchema(boundedString(60), 2, 12),
+        series: arraySchema(chartSeriesSchema, 1, 4),
+        unit: optionalBoundedString(24),
+        sourceIds: sourceIdsSchema,
+      },
+      ["type", "variant", "title", "labels", "series", "sourceIds"],
+    ),
+    planSourceModuleSchema,
+  ],
+  research: [
+    strictObject(
+      {
+        type: enumSchema(["lead"]),
+        variant: enumSchema(["feature", "brief"]),
+        title: boundedString(220),
+        summary: boundedString(1_200),
+        sourceIds: sourceIdsSchema,
+      },
+      ["type", "variant", "title", "summary", "sourceIds"],
+    ),
+    strictObject(
+      {
+        type: enumSchema(["evidence"]),
+        variant: enumSchema(["stack", "grid", "for-against"]),
+        label: boundedString(80),
+        items: arraySchema(
+          strictObject(
+            {
+              title: boundedString(180),
+              finding: boundedString(700),
+              sourceId: sourceIdSchema,
+              stance: enumSchema(["support", "challenge", "neutral"]),
+            },
+            ["title", "finding", "sourceId"],
+          ),
+          1,
+          8,
+        ),
+      },
+      ["type", "variant", "label", "items"],
+    ),
+    strictObject(
+      {
+        type: enumSchema(["timeline"]),
+        label: boundedString(80),
+        items: arraySchema(
+          strictObject(
+            {
+              date: boundedString(80),
+              title: boundedString(180),
+              detail: boundedString(500),
+              sourceId: sourceIdSchema,
+            },
+            ["date", "title", "detail", "sourceId"],
+          ),
+          1,
+          12,
+        ),
+      },
+      ["type", "label", "items"],
+    ),
+    planSourceModuleSchema,
+  ],
+};
+
+function surfacePlanResponseSchema(kind: PlanKind): JsonSchema {
+  return strictObject(
+    {
+      kind: enumSchema([kind]),
+      recipeId: enumSchema(PLAN_RECIPES_BY_KIND[kind]),
+      density: enumSchema(["brief", "balanced", "detailed"]),
+      emphasis: enumSchema(["answer", "decision", "trend", "evidence", "risk"]),
+      modules: {
+        type: "array",
+        minItems: 1,
+        maxItems: 16,
+        items: { anyOf: [...PLAN_MODULE_SCHEMAS_BY_KIND[kind]] },
+      },
+    },
+    ["kind", "recipeId", "density", "emphasis", "modules"],
+  );
+}
+
+function planKindFor(prompt: string, retrieval: GeminiRetrievalResult): PlanKind {
+  const kind = compositionKind(prompt, retrieval);
+  if (kind === "narrative") {
+    throw new CompositionValidationError([
+      "SurfacePlan composition is limited to weather, comparison, and research.",
+    ]);
+  }
+  return kind;
+}
+
+function surfacePlanInstruction(kind: PlanKind): string {
+  const recipes = PLAN_RECIPES_BY_KIND[kind].map((recipeId) => {
+    const recipe = SURFACE_RECIPES[recipeId];
+    return [
+      `${recipeId}: ${recipe.selectionRule}`,
+      `Ideal use: ${recipe.idealUse}`,
+      `Misuse warning: ${recipe.misuseWarning}`,
+      `Compatible modules: ${recipe.compatibleModules.join(", ")}.`,
+      `Example: ${recipe.example}`,
+    ].join(" ");
+  });
+
+  return [
+    "You compose a semantic SurfacePlan for a trusted, server-owned UI compiler.",
+    `Choose exactly one ${kind} recipe from the supplied schema.`,
+    "Put the answer-bearing primary module first and a single sources module last.",
+    "Choose density and emphasis from the allowed enums based on the user's information need.",
+    "Preserve every requested location, unit, hour, day, range, criterion, and evidence item.",
+    "Weather modules may reference only supplied evidence indexes; never copy or invent weather measurements.",
+    "Comparison and research claims must retain unchanged server-issued source IDs. URLs never belong in the plan.",
+    "Do not emit component names, CSS, HTML, JavaScript, URLs, hidden reasoning, or executable instructions.",
+    ...recipes,
+  ].join(" ");
+}
+
+export type SurfaceQualityCheck = {
+  code:
+    | "recipe_fit"
+    | "answer_first"
+    | "sources_last"
+    | "duplicate_primary"
+    | "chart_table_alignment"
+    | "citation_coverage"
+    | "content_budget";
+  passed: boolean;
+};
+
+function planQualityChecks(plan: SurfacePlan): readonly SurfaceQualityCheck[] {
+  const moduleTypes = plan.modules.map((module) => module.type);
+  const primary = plan.kind === "weather" ? "hero" : plan.kind === "comparison" ? "summary" : "lead";
+  const sourceIndexes = moduleTypes.flatMap((type, index) => (type === "sources" ? [index] : []));
+  const budget = plan.density === "brief" ? 6 : plan.density === "balanced" ? 9 : 12;
+  const hasGroundedClaims = plan.kind !== "weather";
+  const sourceModule = plan.modules.find((module) => module.type === "sources");
+  const recipe = SURFACE_RECIPES[plan.recipeId];
+
+  return Object.freeze([
+    { code: "recipe_fit", passed: moduleTypes.includes(recipe.requiredModule) },
+    { code: "answer_first", passed: moduleTypes[0] === primary },
+    {
+      code: "sources_last",
+      passed:
+        sourceIndexes.length === 0 ||
+        (sourceIndexes.length === 1 && sourceIndexes[0] === moduleTypes.length - 1),
+    },
+    {
+      code: "duplicate_primary",
+      passed: moduleTypes.filter((type) => type === primary).length === 1,
+    },
+    { code: "chart_table_alignment", passed: true },
+    {
+      code: "citation_coverage",
+      passed: !hasGroundedClaims || Boolean(sourceModule),
+    },
+    { code: "content_budget", passed: plan.modules.length <= budget },
+  ] satisfies SurfaceQualityCheck[]);
+}
+
+type SurfacePlanValidationFailure = {
+  success: false;
+  issues: readonly string[];
+  rawOutput: string;
+};
+
+type SurfacePlanValidationSuccess = {
+  success: true;
+  plan: SurfacePlan;
+  qualityChecks: readonly SurfaceQualityCheck[];
+};
+
+type SurfacePlanCompositionValidation =
+  | SurfacePlanValidationFailure
+  | SurfacePlanValidationSuccess;
+
+function validatePlanComposition(
+  rawOutput: string,
+  retrieval: GeminiRetrievalResult,
+): SurfacePlanCompositionValidation {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawOutput);
+  } catch {
+    return { success: false, issues: ["The SurfacePlan was not valid JSON."], rawOutput };
+  }
+
+  const validation = validateSurfacePlan(parsed, {
+    sources: retrieval.sources,
+    evidence: retrieval.evidence,
+  });
+  if (!validation.success) {
+    return {
+      success: false,
+      issues: validation.issues.map(boundedIssue),
+      rawOutput,
+    };
+  }
+
+  const qualityChecks = planQualityChecks(validation.plan);
+  const failedChecks = qualityChecks.filter((check) => !check.passed);
+  if (failedChecks.length > 0) {
+    return {
+      success: false,
+      issues: failedChecks.map((check) => `SurfacePlan quality check failed: ${check.code}.`),
+      rawOutput,
+    };
+  }
+
+  return { success: true, plan: validation.plan, qualityChecks };
+}
+
+function initialPlanCompositionInput(payload: Record<string, unknown>): string {
+  return [
+    "Choose the best semantic recipe and emit one complete SurfacePlan.",
+    "Evidence payload:",
+    JSON.stringify(payload),
+  ].join("\n\n");
+}
+
+function repairPlanCompositionInput(
+  payload: Record<string, unknown>,
+  failure: SurfacePlanValidationFailure,
+): string {
+  return [
+    "Repair the invalid SurfacePlan. Return a complete replacement plan, not a patch.",
+    `Validation issues: ${JSON.stringify(failure.issues.slice(0, 8))}`,
+    `Invalid output: ${failure.rawOutput.slice(0, 32_000)}`,
+    `Original evidence payload: ${JSON.stringify(payload)}`,
+  ].join("\n\n");
+}
+
+export interface SurfacePlanCompositionMetadata {
+  recipeId: SurfacePlan["recipeId"];
+  density: SurfacePlan["density"];
+  emphasis: SurfacePlan["emphasis"];
+  qualityChecks: readonly SurfaceQualityCheck[];
+  repairCategory: "none" | "semantic";
+  compilerResult: "compiled" | "deterministic-fallback";
+}
+
+export interface SurfacePlanCompositionResult {
+  plan: SurfacePlan;
+  spec: SurfaceSpec;
+  repairCount: 0 | 1;
+  fallbackUsed: boolean;
+  metadata: SurfacePlanCompositionMetadata;
+}
+
+export async function composeSurfacePlan({
+  gemini,
+  prompt,
+  clientContext,
+  retrieval,
+  signal,
+}: ComposeSurfaceSpecInput): Promise<SurfacePlanCompositionResult> {
+  const payload = evidencePayload(prompt, clientContext, retrieval);
+  const kind = planKindFor(prompt, retrieval);
+  const generator = gemini.structuredOutput;
+  if (!generator) throw new GeminiProviderError("Gemini structured composition is unavailable.");
+
+  let input = initialPlanCompositionInput(payload);
+  let firstFailure: SurfacePlanValidationFailure | undefined;
+
+  for (const repairCount of [0, 1] as const) {
+    let output: { text?: string };
+    try {
+      output = await generator.generate({
+        input,
+        systemInstruction: surfacePlanInstruction(kind),
+        schema: surfacePlanResponseSchema(kind),
+        functionName: "emit_surface_plan",
+        signal,
+      });
+    } catch (error) {
+      if (error instanceof GeminiProviderError) throw error;
+      throw new GeminiProviderError("Gemini plan composition request failed.", { cause: error });
+    }
+
+    const validation = validatePlanComposition(output.text ?? "", retrieval);
+    if (validation.success) {
+      const spec = compileSurfacePlan({ plan: validation.plan, retrieval, clientContext });
+      return {
+        plan: validation.plan,
+        spec,
+        repairCount,
+        fallbackUsed: false,
+        metadata: {
+          recipeId: validation.plan.recipeId,
+          density: validation.plan.density,
+          emphasis: validation.plan.emphasis,
+          qualityChecks: validation.qualityChecks,
+          repairCategory: repairCount === 0 ? "none" : "semantic",
+          compilerResult: "compiled",
+        },
+      };
+    }
+
+    firstFailure ??= validation;
+    if (repairCount === 0) input = repairPlanCompositionInput(payload, validation);
+  }
+
+  const fallbackPlan = SurfacePlanSchema.parse(
+    buildFallbackSurfacePlan({ kind, prompt, retrieval, clientContext }),
+  );
+  const fallbackChecks = planQualityChecks(fallbackPlan);
+  return {
+    plan: fallbackPlan,
+    spec: compileSurfacePlan({ plan: fallbackPlan, retrieval, clientContext }),
+    repairCount: 1,
+    fallbackUsed: true,
+    metadata: {
+      recipeId: fallbackPlan.recipeId,
+      density: fallbackPlan.density,
+      emphasis: fallbackPlan.emphasis,
+      qualityChecks: fallbackChecks,
+      repairCategory: firstFailure ? "semantic" : "none",
+      compilerResult: "deterministic-fallback",
+    },
+  };
 }

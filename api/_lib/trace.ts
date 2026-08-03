@@ -45,13 +45,19 @@ export function sanitizeTraceArguments(
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
-export function createTrace(input: Omit<TraceRecord, "id" | "arguments"> & {
-  id?: string;
-  arguments?: Record<string, unknown>;
-}): TraceRecord {
+type TraceQualityCheck = NonNullable<TraceRecord["qualityChecks"]>[number];
+
+export function createTrace(
+  input: Omit<TraceRecord, "id" | "arguments" | "qualityChecks"> & {
+    id?: string;
+    arguments?: Record<string, unknown>;
+    qualityChecks?: readonly TraceQualityCheck[];
+  },
+): TraceRecord {
   return TraceRecordSchema.parse({
     ...input,
     id: input.id ?? randomUUID(),
     arguments: sanitizeTraceArguments(input.arguments),
+    qualityChecks: input.qualityChecks ? [...input.qualityChecks] : undefined,
   });
 }

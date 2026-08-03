@@ -435,6 +435,31 @@ export const TraceRecordSchema = z
       })
       .strict()
       .optional(),
+    recipeId: SurfaceRecipeIdSchema.optional(),
+    density: SurfaceDensitySchema.optional(),
+    emphasis: SurfaceEmphasisSchema.optional(),
+    qualityChecks: z
+      .array(
+        z
+          .object({
+            code: z.enum([
+              "recipe_fit",
+              "answer_first",
+              "sources_last",
+              "requested_coverage",
+              "duplicate_primary",
+              "chart_table_alignment",
+              "citation_coverage",
+              "content_budget",
+            ]),
+            passed: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(8)
+      .optional(),
+    repairCategory: z.enum(["none", "semantic"]).optional(),
+    compilerResult: z.enum(["compiled", "deterministic-fallback"]).optional(),
   })
   .strict();
 
