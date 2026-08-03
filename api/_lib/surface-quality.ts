@@ -195,54 +195,65 @@ function compareChartAndTable(spec: LooseSurfaceSpec): string | undefined {
 
   const labels = stringArray(chart.labels);
   const columns = stringArray(table.columns);
-  if (columns.length < 2 || labels.length !== columns.length - 1) {
-    return "Chart labels do not align with the table columns.";
-  }
-  if (labels.some((label, index) => label !== columns[index + 1])) {
-    return "Chart labels do not align with the table columns.";
-  }
-
   if (!Array.isArray(chart.series) || !Array.isArray(table.rows)) {
     return "Chart series or table rows are malformed.";
   }
   const chartSeries: readonly unknown[] = chart.series;
   const tableRows: readonly unknown[] = table.rows;
-  if (chartSeries.length !== tableRows.length) {
-    return "Chart series count does not match the table row count.";
-  }
+  const numericValue = (value: unknown): number =>
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value.replace(/[^0-9+-.]/g, ""))
+        : Number.NaN;
+  const validSeries = chartSeries.every(
+    (series) =>
+      isRecord(series) &&
+      typeof series.label === "string" &&
+      Array.isArray(series.values) &&
+      series.values.length === labels.length &&
+      series.values.every((value) => typeof value === "number"),
+  );
+  if (!validSeries) return "Chart series values do not match the requested range.";
 
-  for (let index = 0; index < chartSeries.length; index += 1) {
-    const series: unknown = chartSeries[index];
-    const rowValue: unknown = tableRows[index];
-    if (!isRecord(series) || !Array.isArray(rowValue)) {
-      return "Chart series or table rows are malformed.";
-    }
-    const row: readonly unknown[] = rowValue;
-    if (typeof series.label !== "string" || row[0] !== series.label) {
-      return "Chart series labels do not match the table row labels.";
-    }
-    if (!Array.isArray(series.values)) {
-      return "Chart series values do not match the requested range.";
-    }
-    const seriesValues: readonly unknown[] = series.values;
-    if (seriesValues.length !== labels.length) {
-      return "Chart series values do not match the requested range.";
-    }
-    for (let valueIndex = 0; valueIndex < seriesValues.length; valueIndex += 1) {
-      const chartValue: unknown = seriesValues[valueIndex];
-      const tableValue: unknown = row[valueIndex + 1];
-      const normalizedTableValue = typeof tableValue === "number"
-        ? tableValue
-        : typeof tableValue === "string"
-          ? Number.parseFloat(tableValue.replace(/[^0-9+-.]/g, ""))
-          : Number.NaN;
-      if (typeof chartValue !== "number" || normalizedTableValue !== chartValue) {
-        return "Chart values do not match the table alternative.";
-      }
-    }
-  }
+  const seriesRowsAligned =
+    columns.length === labels.length + 1 &&
+    labels.every((label, index) => label === columns[index + 1]) &&
+    tableRows.length === chartSeries.length &&
+    chartSeries.every((series, seriesIndex) => {
+      if (!isRecord(series) || !Array.isArray(series.values)) return false;
+      const row = tableRows[seriesIndex];
+      return (
+        Array.isArray(row) &&
+        row[0] === series.label &&
+        series.values.every(
+          (value, valueIndex) => numericValue(row[valueIndex + 1]) === value,
+        )
+      );
+    });
+  if (seriesRowsAligned) return undefined;
 
-  return undefined;
+  const periodRowsAligned =
+    columns.length === chartSeries.length + 1 &&
+    chartSeries.every(
+      (series, index) => isRecord(series) && series.label === columns[index + 1],
+    ) &&
+    tableRows.length === labels.length &&
+    labels.every((label, labelIndex) => {
+      const row = tableRows[labelIndex];
+      return (
+        Array.isArray(row) &&
+        row[0] === label &&
+        chartSeries.every((series, seriesIndex) => {
+          return (
+            isRecord(series) &&
+            Array.isArray(series.values) &&
+            numericValue(row[seriesIndex + 1]) === series.values[labelIndex]
+          );
+        })
+      );
+    });
+  return periodRowsAligned ? undefined : "Chart values do not match the table alternative.";
 }
 
 function collectCitationIds(value: unknown, output: Set<string>): void {

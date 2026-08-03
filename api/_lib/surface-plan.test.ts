@@ -420,6 +420,16 @@ const plansByRecipe: Readonly<Record<string, Record<string, unknown>>> = {
         unit: "score",
         sourceIds: searchSources.map((source) => source.id),
       },
+      {
+        type: "table",
+        caption: "Adoption trend data",
+        columns: ["Option", "Now", "Next", "Later"],
+        rows: [
+          ["Option Alpha", "8", "7", "6"],
+          ["Option Beta", "4", "7", "9"],
+        ],
+        sourceIds: searchSources.map((source) => source.id),
+      },
       comparisonSources,
     ],
   },
@@ -616,6 +626,218 @@ describe("SurfacePlan evidence references", () => {
     expect(result.success).toBe(false);
     if (!result.success) expect(result.issues.join(" ")).toMatch(/evidence|reference|index|range/i);
   });
+
+  it("requires exactly one final SourceList whose IDs cover every cited module and item", () => {
+    const incomplete = structuredClone(plansByRecipe["research.claims"]);
+    const sourceModule = (incomplete.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "sources",
+    );
+    sourceModule!.sourceIds = [searchSources[0].id];
+
+    const incompleteResult = validateSurfacePlan(incomplete, {
+      sources: searchSources,
+      evidence: [],
+    });
+    expect(incompleteResult.success).toBe(false);
+    if (!incompleteResult.success) {
+      expect(incompleteResult.issues.join(" ")).toMatch(/final sources|cover|cited/i);
+    }
+
+    const missing = structuredClone(plansByRecipe["research.brief"]);
+    missing.modules = (missing.modules as Array<{ type: string }>).filter(
+      (module) => module.type !== "sources",
+    );
+    const missingResult = validateSurfacePlan(missing, { sources: searchSources, evidence: [] });
+    expect(missingResult.success).toBe(false);
+    if (!missingResult.success) expect(missingResult.issues.join(" ")).toMatch(/exactly one.*sources/i);
+  });
+
+  it.each([
+    "Show me the 7-day forecast for Raleigh.",
+    "Show me the seven-day forecast for Raleigh.",
+    "Show me the next five days in Raleigh.",
+  ])("rejects a one-day selection for the requested range: %s", (prompt) => {
+    const retrieval = structuredClone(weatherRetrieval);
+    const weatherResult = retrieval.evidence[0].result as {
+      locations: Array<typeof raleighWeather>;
+    };
+    weatherResult.locations[0].daily = Array.from({ length: 7 }, (_, index) => ({
+      ...raleighWeather.daily[index % raleighWeather.daily.length],
+      date: `2026-08-${String(index + 2).padStart(2, "0")}`,
+    }));
+    const plan = structuredClone(plansByRecipe["weather.outlook"]);
+    const daily = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "daily",
+    );
+    daily!.dayIndexes = [0];
+
+    const result = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/(?:7|5)-day range.*not fully covered/i);
+  });
+
+  it("rejects a trend whose chart and table measurements differ", () => {
+    const plan = structuredClone(plansByRecipe["comparison.trend"]);
+    const table = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "table",
+    );
+    (table!.rows as string[][])[0][1] = "9999";
+
+    const result = validateSurfacePlan(plan, { sources: searchSources, evidence: [] });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/chart.*table.*aligned/i);
+  });
+
+  it("preflights compiler expansion against the 60-node surface budget", () => {
+    const plan = structuredClone(plansByRecipe["weather.snapshot"]);
+    const metrics = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "metrics",
+    );
+    const sources = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "sources",
+    );
+    plan.modules = [
+      (plan.modules as Array<Record<string, unknown>>)[0],
+      ...Array.from({ length: 9 }, () => structuredClone(metrics!)),
+      sources!,
+    ];
+
+    const result = validateSurfacePlan(plan, {
+      sources: weatherRetrieval.sources,
+      evidence: weatherRetrieval.evidence,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/60-node budget/i);
+  });
+});
+
+describe("weather-backed comparison integrity", () => {
+  function weatherComparisonFixture() {
+    const retrieval = structuredClone(weatherRetrieval);
+    const weatherResult = retrieval.evidence[0].result as {
+      locations: Array<typeof raleighWeather>;
+    };
+    weatherResult.locations.push({
+      ...structuredClone(raleighWeather),
+      location: {
+        name: "Charlotte, NC",
+        latitude: 35.2271,
+        longitude: -80.8431,
+        placeId: "charlotte-place",
+      },
+      current: {
+        ...structuredClone(raleighWeather.current),
+        temperature: 77,
+        feelsLike: 79,
+        precipitationProbability: 24,
+        conditionText: "Cloudy",
+        conditionKey: "cloudy" as const,
+      },
+      hourly: raleighWeather.hourly.map((hour, index) => ({
+        ...structuredClone(hour),
+        temperature: 77 + index,
+        precipitationProbability: 24 - index,
+      })),
+      daily: raleighWeather.daily.map((day, index) => ({
+        ...structuredClone(day),
+        high: 80 + index,
+        low: 64 + index,
+        precipitationProbability: 45 - index * 5,
+      })),
+      alerts: [],
+    });
+    const sourceIds = retrieval.sources.map((source) => source.id);
+    const plan = {
+      kind: "comparison",
+      recipeId: "comparison.trend",
+      density: "detailed",
+      emphasis: "trend",
+      modules: [
+        {
+          type: "summary",
+          variant: "balanced",
+          title: "Raleigh and Charlotte weather",
+          recommendation: "Compare the provider-observed conditions and trend.",
+          locationIndexes: [0, 1],
+          recommendedLocationIndex: 1,
+          sourceIds,
+        },
+        {
+          type: "chart",
+          variant: "line",
+          title: "Two-hour temperature trend",
+          locationIndexes: [0, 1],
+          forecastKind: "hourly",
+          forecastIndexes: [0, 1],
+          metric: "temperature",
+          sourceIds,
+        },
+        {
+          type: "table",
+          caption: "Temperature trend data",
+          locationIndexes: [0, 1],
+          forecastKind: "hourly",
+          forecastIndexes: [0, 1],
+          metric: "temperature",
+          sourceIds,
+        },
+        { type: "sources", label: "Weather sources", sourceIds },
+      ],
+    };
+    return { retrieval, plan };
+  }
+
+  it("rejects model-authored 9999 weather values and compiles only trusted measurements", () => {
+    const { retrieval, plan } = weatherComparisonFixture();
+    const authored = structuredClone(plansByRecipe["comparison.trend"]);
+    const chart = (authored.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "chart",
+    );
+    (chart!.series as Array<{ values: number[] }>)[0].values[0] = 9999;
+    const authoredResult = validateSurfacePlan(authored, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+    });
+    expect(authoredResult.success).toBe(false);
+    if (!authoredResult.success) {
+      expect(authoredResult.issues.join(" ")).toMatch(/weather-backed.*bounded evidence references/i);
+    }
+
+    const narratedMeasurement = structuredClone(plan);
+    const summary = (narratedMeasurement.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "summary",
+    );
+    summary!.recommendation = "Raleigh will be 9999°F.";
+    const narrativeResult = validateSurfacePlan(narratedMeasurement, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+    });
+    expect(narrativeResult.success).toBe(false);
+    if (!narrativeResult.success) {
+      expect(narrativeResult.issues.join(" ")).toMatch(/model-authored measurements/i);
+    }
+
+    const parsed = SurfacePlanSchema.parse(plan);
+    const spec = compileSurfacePlan({ plan: parsed, retrieval, clientContext });
+    const compiledChart = spec.components.find((node) => node.component === "ComparisonChart");
+    const compiledSummary = spec.components.find((node) => node.component === "ComparisonSummary");
+    const compiledTable = spec.components.find((node) => node.component === "ComparisonTable");
+    expect(compiledChart).toMatchObject({
+      series: [
+        { label: "Raleigh, NC", values: [82, 83] },
+        { label: "Charlotte, NC", values: [77, 78] },
+      ],
+    });
+    expect(JSON.stringify([compiledSummary, compiledTable, compiledChart])).not.toContain("9999");
+  });
 });
 
 describe("compileSurfacePlan", () => {
@@ -713,6 +935,122 @@ describe("compileSurfacePlan", () => {
       severity: "moderate",
       description: "Heat index values may become elevated this afternoon.",
     });
+  });
+
+  it("binds a WeatherAlert to its exact authority source when the provider supplies one", () => {
+    const authority: SourceRecord = {
+      id: "src_authority1",
+      title: "National Weather Service",
+      url: "https://weather.gov/alerts/heat-advisory",
+      provider: "google-weather",
+      accessedAt: "2026-08-02T14:00:00.000Z",
+    };
+    const cloned = structuredClone(weatherRetrieval);
+    const result = cloned.evidence[0].result as {
+      locations: Array<{ alerts: Array<Record<string, unknown>> }>;
+    };
+    result.locations[0].alerts[0].sourceAuthorityUri = authority.url;
+    const retrieval: GeminiRetrievalResult = {
+      ...cloned,
+      sources: Object.freeze([Object.freeze(weatherSource), Object.freeze(authority)]),
+    };
+    const plan = structuredClone(plansByRecipe["weather.outlook"]);
+    const sources = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "sources",
+    );
+    sources!.sourceIds = [weatherSource.id, authority.id];
+
+    const spec = compileSurfacePlan({
+      plan: SurfacePlanSchema.parse(plan),
+      retrieval,
+      clientContext,
+    });
+
+    expect(spec.components.find((node) => node.component === "WeatherAlert")).toMatchObject({
+      title: "Heat advisory",
+      sourceId: authority.id,
+    });
+    expect(spec.components.find((node) => node.component === "SourceList")).toMatchObject({
+      sourceIds: [weatherSource.id, authority.id],
+    });
+  });
+
+  it("compiles a wettest-day recommendation from the referenced daily evidence", () => {
+    const plan = structuredClone(plansByRecipe["weather.outlook"]);
+    const sourceIndex = (plan.modules as Array<{ type: string }>).findIndex(
+      (module) => module.type === "sources",
+    );
+    (plan.modules as unknown[]).splice(sourceIndex, 0, {
+      type: "recommendation",
+      locationIndex: 0,
+      dayIndex: 1,
+      signal: "wettest",
+    });
+
+    const spec = compileSurfacePlan({
+      plan: SurfacePlanSchema.parse(plan),
+      retrieval: weatherRetrieval,
+      clientContext,
+    });
+
+    expect(spec.components.find((node) => node.component === "RecommendationBand")).toMatchObject({
+      label: "Wettest day",
+      detail: "35% precipitation probability · 88°F high",
+      confidence: "high",
+    });
+  });
+
+  it("validates the requested activity and renders its window in the provider location timezone", () => {
+    const cloned = structuredClone(weatherRetrieval);
+    const result = cloned.evidence[0].result as {
+      locations: Array<typeof raleighWeather>;
+      activityWindows: Array<{
+        location: typeof raleighWeather.location;
+        activity?: string;
+        startTime: string;
+        endTime: string;
+        label: string;
+      }>;
+    };
+    result.locations[0].location = {
+      name: "Denver, CO",
+      latitude: 39.7392,
+      longitude: -104.9903,
+      placeId: "denver-place",
+    };
+    result.locations[0].current.timeZone = "America/Denver";
+    result.activityWindows[0].location = result.locations[0].location;
+    result.activityWindows[0].activity = "run";
+    result.activityWindows[0].startTime = "2026-08-02T13:00:00.000Z";
+    result.activityWindows[0].endTime = "2026-08-02T15:00:00.000Z";
+    result.activityWindows[0].label = "2-hour run window at requested time";
+    const plan = SurfacePlanSchema.parse(structuredClone(plansByRecipe["weather.decision"]));
+    const prompt = "Can I run at 7 AM in Denver?";
+
+    expect(
+      validateSurfacePlan(plan, {
+        sources: cloned.sources,
+        evidence: cloned.evidence,
+        prompt,
+        clientContext,
+      }),
+    ).toMatchObject({ success: true });
+    const spec = compileSurfacePlan({ plan, retrieval: cloned, clientContext });
+    expect(spec.components.find((node) => node.component === "RecommendationBand")).toMatchObject({
+      label: "2-hour run window at requested time",
+      value: "7:00 AM–9:00 AM",
+    });
+
+    result.activityWindows[0].activity = "walk";
+    result.activityWindows[0].label = "2-hour walk window at requested time";
+    const mismatch = validateSurfacePlan(plan, {
+      sources: cloned.sources,
+      evidence: cloned.evidence,
+      prompt,
+      clientContext,
+    });
+    expect(mismatch.success).toBe(false);
+    if (!mismatch.success) expect(mismatch.issues.join(" ")).toMatch(/requested run activity/i);
   });
 });
 

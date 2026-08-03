@@ -144,6 +144,29 @@ function compose(client: GeminiClient): Promise<PlanCompositionResult> {
 }
 
 describe("composeSurfacePlan", () => {
+  it("routes a scored multi-city weather prompt to the comparison plan schema", () => {
+    const weatherBacked: GeminiRetrievalResult = {
+      ...retrieval,
+      evidence: Object.freeze([
+        Object.freeze({
+          tool: "get_weather_bundle" as const,
+          arguments: Object.freeze({
+            locations: Object.freeze(["Raleigh", "Durham", "Charlotte", "Asheville"]),
+            units: "imperial" as const,
+          }),
+          result: Object.freeze({}),
+        }),
+      ]),
+    };
+
+    expect(
+      compositionModule.compositionKind(
+        "Score Raleigh, Durham, Charlotte, and Asheville for a Sunday outdoor brunch.",
+        weatherBacked,
+      ),
+    ).toBe("comparison");
+  });
+
   it("uses a separate emit_surface_plan schema call and compiles the validated plan", async () => {
     const { client, requests } = fakeClient([validPlan]);
 

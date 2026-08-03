@@ -12,6 +12,7 @@ import {
   SurfacePlanSchema,
   buildFallbackSurfacePlan,
   compileSurfacePlan,
+  evaluateSurfacePlanQuality,
   validateSurfacePlan,
   type SurfacePlan,
 } from "./surface-plan.js";
@@ -492,10 +493,12 @@ const COMPONENT_CONTRACTS_BY_KIND = {
 } as const satisfies Record<CompositionKind, readonly string[]>;
 
 function requestedComparison(prompt: string): boolean {
-  return /\b(compare|comparison|versus|vs\.?|better|difference)\b/i.test(prompt);
+  return /\b(compare|comparison|versus|vs\.?|better|difference|score|rank|which (?:city|location|place|option))\b/i.test(
+    prompt,
+  );
 }
 
-function compositionKind(prompt: string, retrieval: GeminiRetrievalResult): CompositionKind {
+export function compositionKind(prompt: string, retrieval: GeminiRetrievalResult): CompositionKind {
   if (requestedComparison(prompt)) return "comparison";
   if (retrieval.evidence.length > 0) return "weather";
   if (retrieval.sources.some((source) => source.provider === "google-search")) return "research";
@@ -737,6 +740,15 @@ const PLAN_MODULE_SCHEMAS_BY_KIND: Record<PlanKind, readonly JsonSchema[]> = {
     ),
     strictObject(
       {
+        type: enumSchema(["recommendation"]),
+        locationIndex: planIndexSchema,
+        dayIndex: planIndexSchema,
+        signal: enumSchema(["wettest", "driest", "warmest", "coolest"]),
+      },
+      ["type", "locationIndex", "dayIndex", "signal"],
+    ),
+    strictObject(
+      {
         type: enumSchema(["hourly"]),
         variant: enumSchema(["strip", "chart"]),
         label: boundedString(80),
@@ -869,7 +881,74 @@ const PLAN_MODULE_SCHEMAS_BY_KIND: Record<PlanKind, readonly JsonSchema[]> = {
   ],
 };
 
-function surfacePlanResponseSchema(kind: PlanKind): JsonSchema {
+const weatherComparisonLocationIndexesSchema = planIndexesSchema(2, LIMITS.locations);
+const WEATHER_COMPARISON_PLAN_MODULE_SCHEMAS: readonly JsonSchema[] = [
+  strictObject(
+    {
+      type: enumSchema(["summary"]),
+      variant: enumSchema(["verdict", "balanced"]),
+      title: boundedString(180),
+      recommendation: boundedString(400),
+      locationIndexes: weatherComparisonLocationIndexesSchema,
+      recommendedLocationIndex: planIndexSchema,
+      sourceIds: sourceIdsSchema,
+    },
+    ["type", "variant", "title", "recommendation", "locationIndexes", "sourceIds"],
+  ),
+  strictObject(
+    {
+      type: enumSchema(["table"]),
+      caption: boundedString(160),
+      locationIndexes: weatherComparisonLocationIndexesSchema,
+      forecastKind: enumSchema(["current", "hourly", "daily"]),
+      forecastIndexes: planIndexesSchema(1, 12),
+      metrics: arraySchema(
+        enumSchema([
+          "temperature",
+          "feelsLike",
+          "humidity",
+          "precipitation",
+          "wind",
+          "uv",
+          "visibility",
+        ]),
+        1,
+        7,
+      ),
+      metric: enumSchema(["temperature", "high", "low", "precipitation"]),
+      sourceIds: sourceIdsSchema,
+    },
+    ["type", "caption", "locationIndexes", "forecastKind", "sourceIds"],
+  ),
+  strictObject(
+    {
+      type: enumSchema(["chart"]),
+      variant: enumSchema(["line", "bar"]),
+      title: boundedString(160),
+      locationIndexes: weatherComparisonLocationIndexesSchema,
+      forecastKind: enumSchema(["hourly", "daily"]),
+      forecastIndexes: planIndexesSchema(2, 12),
+      metric: enumSchema(["temperature", "high", "low", "precipitation"]),
+      sourceIds: sourceIdsSchema,
+    },
+    [
+      "type",
+      "variant",
+      "title",
+      "locationIndexes",
+      "forecastKind",
+      "forecastIndexes",
+      "metric",
+      "sourceIds",
+    ],
+  ),
+  planSourceModuleSchema,
+];
+
+function surfacePlanResponseSchema(kind: PlanKind, weatherBackedComparison: boolean): JsonSchema {
+  const moduleSchemas = weatherBackedComparison
+    ? WEATHER_COMPARISON_PLAN_MODULE_SCHEMAS
+    : PLAN_MODULE_SCHEMAS_BY_KIND[kind];
   return strictObject(
     {
       kind: enumSchema([kind]),
@@ -880,7 +959,7 @@ function surfacePlanResponseSchema(kind: PlanKind): JsonSchema {
         type: "array",
         minItems: 1,
         maxItems: 16,
-        items: { anyOf: [...PLAN_MODULE_SCHEMAS_BY_KIND[kind]] },
+        items: { anyOf: [...moduleSchemas] },
       },
     },
     ["kind", "recipeId", "density", "emphasis", "modules"],
@@ -897,7 +976,7 @@ function planKindFor(prompt: string, retrieval: GeminiRetrievalResult): PlanKind
   return kind;
 }
 
-function surfacePlanInstruction(kind: PlanKind): string {
+function surfacePlanInstruction(kind: PlanKind, weatherBackedComparison: boolean): string {
   const recipes = PLAN_RECIPES_BY_KIND[kind].map((recipeId) => {
     const recipe = SURFACE_RECIPES[recipeId];
     return [
@@ -916,6 +995,9 @@ function surfacePlanInstruction(kind: PlanKind): string {
     "Choose density and emphasis from the allowed enums based on the user's information need.",
     "Preserve every requested location, unit, hour, day, range, criterion, and evidence item.",
     "Weather modules may reference only supplied evidence indexes; never copy or invent weather measurements.",
+    weatherBackedComparison
+      ? "This comparison is weather-backed. Use only locationIndexes, forecastIndexes, metric references, and source IDs; never emit items, rows, labels, series, or measurements. Current tables use metrics without forecastIndexes or metric. Hourly/daily tables and charts use one metric plus forecastIndexes."
+      : "Non-weather comparisons may summarize supplied search evidence but must retain its source IDs.",
     "Comparison and research claims must retain unchanged server-issued source IDs. URLs never belong in the plan.",
     "Do not emit component names, CSS, HTML, JavaScript, URLs, hidden reasoning, or executable instructions.",
     ...recipes,
@@ -927,6 +1009,7 @@ export type SurfaceQualityCheck = {
     | "recipe_fit"
     | "answer_first"
     | "sources_last"
+    | "requested_coverage"
     | "duplicate_primary"
     | "chart_table_alignment"
     | "citation_coverage"
@@ -934,35 +1017,24 @@ export type SurfaceQualityCheck = {
   passed: boolean;
 };
 
-function planQualityChecks(plan: SurfacePlan): readonly SurfaceQualityCheck[] {
-  const moduleTypes = plan.modules.map((module) => module.type);
-  const primary = plan.kind === "weather" ? "hero" : plan.kind === "comparison" ? "summary" : "lead";
-  const sourceIndexes = moduleTypes.flatMap((type, index) => (type === "sources" ? [index] : []));
-  const budget = plan.density === "brief" ? 6 : plan.density === "balanced" ? 9 : 12;
-  const hasGroundedClaims = plan.kind !== "weather";
-  const sourceModule = plan.modules.find((module) => module.type === "sources");
-  const recipe = SURFACE_RECIPES[plan.recipeId];
-
-  return Object.freeze([
-    { code: "recipe_fit", passed: moduleTypes.includes(recipe.requiredModule) },
-    { code: "answer_first", passed: moduleTypes[0] === primary },
-    {
-      code: "sources_last",
-      passed:
-        sourceIndexes.length === 0 ||
-        (sourceIndexes.length === 1 && sourceIndexes[0] === moduleTypes.length - 1),
-    },
-    {
-      code: "duplicate_primary",
-      passed: moduleTypes.filter((type) => type === primary).length === 1,
-    },
-    { code: "chart_table_alignment", passed: true },
-    {
-      code: "citation_coverage",
-      passed: !hasGroundedClaims || Boolean(sourceModule),
-    },
-    { code: "content_budget", passed: plan.modules.length <= budget },
-  ] satisfies SurfaceQualityCheck[]);
+function planQualityChecks(
+  plan: SurfacePlan,
+  prompt: string,
+  retrieval: GeminiRetrievalResult,
+  clientContext: ClientContext,
+): readonly SurfaceQualityCheck[] {
+  const evaluated = evaluateSurfacePlanQuality(plan, {
+    sources: retrieval.sources,
+    evidence: retrieval.evidence,
+    prompt,
+    clientContext,
+  });
+  return Object.freeze(
+    Object.entries(evaluated).map(([code, passed]) => ({
+      code: code as SurfaceQualityCheck["code"],
+      passed,
+    })),
+  );
 }
 
 type SurfacePlanValidationFailure = {
@@ -983,6 +1055,8 @@ type SurfacePlanCompositionValidation =
 
 function validatePlanComposition(
   rawOutput: string,
+  prompt: string,
+  clientContext: ClientContext,
   retrieval: GeminiRetrievalResult,
 ): SurfacePlanCompositionValidation {
   let parsed: unknown;
@@ -995,6 +1069,8 @@ function validatePlanComposition(
   const validation = validateSurfacePlan(parsed, {
     sources: retrieval.sources,
     evidence: retrieval.evidence,
+    prompt,
+    clientContext,
   });
   if (!validation.success) {
     return {
@@ -1004,7 +1080,7 @@ function validatePlanComposition(
     };
   }
 
-  const qualityChecks = planQualityChecks(validation.plan);
+  const qualityChecks = planQualityChecks(validation.plan, prompt, retrieval, clientContext);
   const failedChecks = qualityChecks.filter((check) => !check.passed);
   if (failedChecks.length > 0) {
     return {
@@ -1063,6 +1139,7 @@ export async function composeSurfacePlan({
 }: ComposeSurfaceSpecInput): Promise<SurfacePlanCompositionResult> {
   const payload = evidencePayload(prompt, clientContext, retrieval);
   const kind = planKindFor(prompt, retrieval);
+  const weatherBackedComparison = kind === "comparison" && retrieval.evidence.length > 0;
   const generator = gemini.structuredOutput;
   if (!generator) throw new GeminiProviderError("Gemini structured composition is unavailable.");
 
@@ -1074,8 +1151,8 @@ export async function composeSurfacePlan({
     try {
       output = await generator.generate({
         input,
-        systemInstruction: surfacePlanInstruction(kind),
-        schema: surfacePlanResponseSchema(kind),
+        systemInstruction: surfacePlanInstruction(kind, weatherBackedComparison),
+        schema: surfacePlanResponseSchema(kind, weatherBackedComparison),
         functionName: "emit_surface_plan",
         signal,
       });
@@ -1084,23 +1161,39 @@ export async function composeSurfacePlan({
       throw new GeminiProviderError("Gemini plan composition request failed.", { cause: error });
     }
 
-    const validation = validatePlanComposition(output.text ?? "", retrieval);
+    const validation = validatePlanComposition(
+      output.text ?? "",
+      prompt,
+      clientContext,
+      retrieval,
+    );
     if (validation.success) {
-      const spec = compileSurfacePlan({ plan: validation.plan, retrieval, clientContext });
-      return {
-        plan: validation.plan,
-        spec,
-        repairCount,
-        fallbackUsed: false,
-        metadata: {
-          recipeId: validation.plan.recipeId,
-          density: validation.plan.density,
-          emphasis: validation.plan.emphasis,
-          qualityChecks: validation.qualityChecks,
-          repairCategory: repairCount === 0 ? "none" : "semantic",
-          compilerResult: "compiled",
-        },
-      };
+      try {
+        const spec = compileSurfacePlan({ plan: validation.plan, retrieval, clientContext });
+        return {
+          plan: validation.plan,
+          spec,
+          repairCount,
+          fallbackUsed: false,
+          metadata: {
+            recipeId: validation.plan.recipeId,
+            density: validation.plan.density,
+            emphasis: validation.plan.emphasis,
+            qualityChecks: validation.qualityChecks,
+            repairCategory: repairCount === 0 ? "none" : "semantic",
+            compilerResult: "compiled",
+          },
+        };
+      } catch {
+        const compilationFailure: SurfacePlanValidationFailure = {
+          success: false,
+          issues: ["The SurfacePlan could not be compiled within the trusted catalog budget."],
+          rawOutput: output.text ?? "",
+        };
+        firstFailure ??= compilationFailure;
+        if (repairCount === 0) input = repairPlanCompositionInput(payload, compilationFailure);
+        continue;
+      }
     }
 
     firstFailure ??= validation;
@@ -1110,7 +1203,7 @@ export async function composeSurfacePlan({
   const fallbackPlan = SurfacePlanSchema.parse(
     buildFallbackSurfacePlan({ kind, prompt, retrieval, clientContext }),
   );
-  const fallbackChecks = planQualityChecks(fallbackPlan);
+  const fallbackChecks = planQualityChecks(fallbackPlan, prompt, retrieval, clientContext);
   return {
     plan: fallbackPlan,
     spec: compileSurfacePlan({ plan: fallbackPlan, retrieval, clientContext }),
