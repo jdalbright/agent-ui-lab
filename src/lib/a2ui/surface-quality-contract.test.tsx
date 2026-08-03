@@ -307,4 +307,13 @@ describe("semantic component variants", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("keeps a horizontally scrollable daily-card range keyboard reachable", () => {
+    renderTrustedSurface([{ ...variantCases[2].node, variant: "cards" }]);
+
+    expect(screen.getByRole("list", { name: "Weekend outlook" })).toHaveAttribute(
+      "tabindex",
+      "0",
+    );
+  });
 });

@@ -832,7 +832,7 @@
   --a2ui-coral: #fff0ed;
   --a2ui-soft: #f6f8fa;
   --a2ui-blue: #145fc1;
-  --a2ui-red: #ef5c50;
+  --a2ui-red: #a4372d;
   --a2ui-focus: #145fc1;
   color: var(--a2ui-ink);
   font-family: var(--font-sans, "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif);
@@ -1284,7 +1284,7 @@
   }
 
   .a2ui-table-scroll {
-    overflow-x: visible;
+    overflow-x: auto;
   }
 
   .a2ui-daily-table tbody {

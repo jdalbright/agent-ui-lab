@@ -152,7 +152,7 @@ export const DailyForecast = createComponentImplementation(
           {props.label}
         </h3>
         {variant === "cards" ? (
-          <ol className="a2ui-daily-cards">
+          <ol className="a2ui-daily-cards" tabIndex={0} aria-labelledby={labelId}>
             {props.items.map((item, index) => (
               <li key={`${item.date}-${index}`}>
                 <time>{item.date}</time>
