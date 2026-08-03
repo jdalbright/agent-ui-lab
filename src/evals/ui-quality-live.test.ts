@@ -58,17 +58,26 @@ describe.skipIf(!LIVE_ENABLED)("opt-in live UI composition evaluation", () => {
       },
     });
 
-    const firstPassRate = report.totals.firstPassValid / report.totals.attempted;
-    expect(report.totals.attempted).toBe(UI_QUALITY_CASES.length * 3);
-    expect(firstPassRate).toBeGreaterThanOrEqual(0.95);
-    expect(report.totals.fallbacks).toBe(0);
-    expect(report.totals.valid).toBe(report.totals.attempted);
-    expect(new Set(report.samples.map((sample) => sample.recipeId))).toEqual(
-      new Set(UI_QUALITY_CASES.map((testCase) => testCase.recipeId)),
-    );
     console.info(JSON.stringify({
       event: "ui_quality_live_report",
       totals: report.totals,
+      cases: Object.fromEntries(
+        UI_QUALITY_CASES.map((testCase) => {
+          const samples = report.samples.filter((sample) => sample.caseId === testCase.id);
+          return [
+            testCase.id,
+            {
+              attempted: samples.length,
+              valid: samples.filter((sample) => sample.success).length,
+              firstPassValid: samples.filter((sample) => sample.firstPassValid).length,
+              repairs: samples.filter((sample) => sample.repairCount > 0).length,
+              fallbacks: samples.filter((sample) => sample.fallbackUsed).length,
+              recipeSelections: [...new Set(samples.map((sample) => sample.recipeId))],
+              issueCodes: [...new Set(samples.flatMap((sample) => sample.issueCodes))],
+            },
+          ];
+        }),
+      ),
       recipeSelections: Object.fromEntries(
         UI_QUALITY_CASES.map((testCase) => [
           testCase.recipeId,
@@ -86,6 +95,15 @@ describe.skipIf(!LIVE_ENABLED)("opt-in live UI composition evaluation", () => {
         ),
       },
     }));
+
+    const firstPassRate = report.totals.firstPassValid / report.totals.attempted;
+    expect(report.totals.attempted).toBe(UI_QUALITY_CASES.length * 3);
+    expect(firstPassRate).toBeGreaterThanOrEqual(0.95);
+    expect(report.totals.fallbacks).toBe(0);
+    expect(report.totals.valid).toBe(report.totals.attempted);
+    expect(new Set(report.samples.map((sample) => sample.recipeId))).toEqual(
+      new Set(UI_QUALITY_CASES.map((testCase) => testCase.recipeId)),
+    );
   }, 900_000);
 });
 
