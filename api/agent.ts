@@ -109,17 +109,24 @@ function contextualPrompt(request: AgentRequest, priorTurns: readonly TurnSummar
   return `${request.prompt}\n\n${prefix}${context.slice(0, remaining)}`;
 }
 
-function boundedInteger(
+function validatedInteger(
   value: number | undefined,
   fallback: number,
   minimum: number,
   maximum: number,
+  label: string,
 ): number {
-  if (value === undefined || !Number.isFinite(value)) return fallback;
-  return Math.min(maximum, Math.max(minimum, Math.round(value)));
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new RangeError(`${label} must be an integer from ${minimum} through ${maximum}.`);
+  }
+  return value;
 }
 
 function namedWeatherQueries(args: Readonly<GetWeatherBundleArguments>): string[] {
+  if (args.location !== undefined && args.locations !== undefined) {
+    throw new RangeError("location and locations cannot be combined.");
+  }
   const requested = [args.location, ...(args.locations ?? [])]
     .flatMap((location) => (typeof location === "string" ? [location.trim()] : []))
     .filter(Boolean);
@@ -143,7 +150,37 @@ export async function executeWeather(
   let locations: WeatherLocation[] = [];
   const approvedCoordinates = request.client.coordinates;
   const namedQueries = namedWeatherQueries(args);
-  const hasRequestedCoordinates = args.latitude !== undefined && args.longitude !== undefined;
+  const hasLatitude = args.latitude !== undefined;
+  const hasLongitude = args.longitude !== undefined;
+  if (hasLatitude !== hasLongitude) {
+    throw new RangeError("latitude and longitude must be provided together.");
+  }
+  const hasRequestedCoordinates = hasLatitude && hasLongitude;
+  const locationModes = Number(namedQueries.length > 0) + Number(hasRequestedCoordinates);
+  if (locationModes !== 1) {
+    throw new RangeError("Exactly one named-location mode or coordinate pair is required.");
+  }
+
+  const durationHours = validatedInteger(args.durationHours, 2, 1, 6, "durationHours");
+  const targetDayOffset = validatedInteger(args.targetDayOffset, 0, 0, 9, "targetDayOffset");
+  if (args.targetLocalTime && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(args.targetLocalTime)) {
+    throw new RangeError("targetLocalTime must use 24-hour HH:MM format.");
+  }
+  if (args.targetLocalTime && args.targetDayOffset === undefined) {
+    throw new RangeError("targetDayOffset is required with targetLocalTime.");
+  }
+  const minimumTargetHours = args.targetLocalTime
+    ? (targetDayOffset + 1) * 24 +
+      durationHours -
+      1 +
+      (args.targetLocalTime.endsWith(":00") ? 0 : 1)
+    : 0;
+  if (minimumTargetHours > 240) {
+    throw new RangeError("The requested activity window exceeds the 240-hour forecast horizon.");
+  }
+  const requestedHours = validatedInteger(args.hours, 24, 1, 240, "hours");
+  const hours = Math.max(requestedHours, minimumTargetHours);
+  const days = validatedInteger(args.days, 7, 1, 10, "days");
 
   if (approvedCoordinates && hasRequestedCoordinates && namedQueries.length === 0) {
     const resolved = await reverseGeocodeLocation(
@@ -175,13 +212,6 @@ export async function executeWeather(
   }
 
   if (locations.length === 0) throw new LocationResolutionError();
-  const durationHours = boundedInteger(args.durationHours, 2, 1, 6);
-  const targetDayOffset = boundedInteger(args.targetDayOffset, 0, 0, 9);
-  const minimumTargetHours = args.targetLocalTime
-    ? (targetDayOffset + 1) * 24 + durationHours - 1 + (args.targetLocalTime.endsWith(":00") ? 0 : 1)
-    : 0;
-  const hours = Math.max(boundedInteger(args.hours, 24, 1, 240), Math.min(240, minimumTargetHours));
-  const days = boundedInteger(args.days, 7, 1, 10);
   const bundle = await getWeatherBundle({
     locations,
     apiKey,

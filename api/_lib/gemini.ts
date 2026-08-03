@@ -23,6 +23,34 @@ const WEATHER_TOOL = {
   parameters: {
     type: "object",
     additionalProperties: false,
+    oneOf: [
+      {
+        required: ["location"],
+        not: {
+          anyOf: [
+            { required: ["locations"] },
+            { required: ["latitude"] },
+            { required: ["longitude"] },
+          ],
+        },
+      },
+      {
+        required: ["locations"],
+        not: {
+          anyOf: [
+            { required: ["location"] },
+            { required: ["latitude"] },
+            { required: ["longitude"] },
+          ],
+        },
+      },
+      {
+        required: ["latitude", "longitude"],
+        not: {
+          anyOf: [{ required: ["location"] }, { required: ["locations"] }],
+        },
+      },
+    ],
     properties: {
       location: {
         type: "string",
@@ -106,11 +134,8 @@ const RETRIEVAL_INSTRUCTION = [
   "Do not invent tool results. After retrieval, return a concise factual evidence summary; do not generate UI component JSON.",
 ].join(" ");
 
-const clampedInteger = (minimum: number, maximum: number) =>
-  z
-    .number()
-    .finite()
-    .transform((value) => Math.min(maximum, Math.max(minimum, Math.round(value))));
+const strictInteger = (minimum: number, maximum: number) =>
+  z.number().int().min(minimum).max(maximum);
 
 const WeatherArgumentsInputSchema = z
   .object({
@@ -119,17 +144,19 @@ const WeatherArgumentsInputSchema = z
     latitude: z.number().min(-90).max(90).optional(),
     longitude: z.number().min(-180).max(180).optional(),
     units: UnitsSchema.optional(),
-    hours: clampedInteger(1, 240).optional(),
-    days: clampedInteger(1, 10).optional(),
+    hours: strictInteger(1, 240).optional(),
+    days: strictInteger(1, 10).optional(),
     activity: z.string().trim().min(1).max(60).optional(),
-    durationHours: clampedInteger(1, 6).optional(),
+    durationHours: strictInteger(1, 6).optional(),
     targetLocalTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
-    targetDayOffset: clampedInteger(0, 9).optional(),
+    targetDayOffset: strictInteger(0, 9).optional(),
   })
   .strict()
   .superRefine((value, context) => {
     const hasLatitude = value.latitude !== undefined;
     const hasLongitude = value.longitude !== undefined;
+    const hasLegacyLocation = value.location !== undefined;
+    const hasLocationList = value.locations !== undefined;
     const namedLocations = [value.location, ...(value.locations ?? [])].filter(
       (location): location is string => Boolean(location),
     );
@@ -140,6 +167,14 @@ const WeatherArgumentsInputSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "latitude and longitude must be provided together",
+      });
+    }
+    const locationModes =
+      Number(hasLegacyLocation) + Number(hasLocationList) + Number(hasLatitude && hasLongitude);
+    if (locationModes !== 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "exactly one of location, locations, or a coordinate pair is required",
       });
     }
     if (namedLocations.length === 0 && !hasLatitude) {
@@ -171,6 +206,20 @@ const WeatherArgumentsInputSchema = z
         code: z.ZodIssueCode.custom,
         message: "targetDayOffset is required with targetLocalTime",
       });
+    }
+    if (value.targetLocalTime && value.targetDayOffset !== undefined) {
+      const durationHours = value.durationHours ?? 2;
+      const requestedHours =
+        (value.targetDayOffset + 1) * 24 +
+        durationHours -
+        1 +
+        (value.targetLocalTime.endsWith(":00") ? 0 : 1);
+      if (requestedHours > 240) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "the requested activity window exceeds the 240-hour forecast horizon",
+        });
+      }
     }
   });
 
@@ -384,6 +433,10 @@ function validateWeatherArguments(
   });
 }
 
+function weatherLocationCount(arguments_: Readonly<GetWeatherBundleArguments>): number {
+  return arguments_.locations?.length ?? 1;
+}
+
 function serializeToolResult(value: unknown): string {
   try {
     const serialized = JSON.stringify(value);
@@ -489,6 +542,8 @@ export async function runGeminiRetrieval({
   const evidence: WeatherEvidence[] = [];
   const weatherSources: SourceRecord[] = [];
   let toolRounds = 0;
+  let weatherToolCalls = 0;
+  let weatherLocations = 0;
 
   while (true) {
     const interaction = await gemini.interactions.create({
@@ -529,6 +584,18 @@ export async function runGeminiRetrieval({
       }
 
       const arguments_ = validateWeatherArguments(functionCall.arguments, clientContext.units);
+      weatherToolCalls += 1;
+      if (weatherToolCalls > LIMITS.locations) {
+        throw new GeminiProviderError(
+          `Gemini requested more than ${LIMITS.locations} weather tool calls.`,
+        );
+      }
+      weatherLocations += weatherLocationCount(arguments_);
+      if (weatherLocations > LIMITS.locations) {
+        throw new GeminiProviderError(
+          `Gemini requested more than ${LIMITS.locations} weather locations.`,
+        );
+      }
       const execution = await executeWeather(arguments_);
       const normalizedSources = normalizeWeatherSources(execution.sources);
       weatherSources.push(...normalizedSources);

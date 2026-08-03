@@ -6,10 +6,14 @@ describe("sanitizeTraceArguments", () => {
     expect(
       sanitizeTraceArguments({
         location: "Raleigh, NC",
+        locations: ["Raleigh, NC", "Seattle, WA"],
         units: "imperial",
         days: 5,
         hours: 24,
         activity: "walk",
+        durationHours: 2,
+        targetLocalTime: "07:00",
+        targetDayOffset: 1,
         query: "current forecast",
         apiKey: "must-not-appear",
         contextToken: "must-not-appear",
@@ -17,11 +21,13 @@ describe("sanitizeTraceArguments", () => {
         providerSteps: ["hidden"],
       }),
     ).toEqual({
-      location: "Raleigh, NC",
       units: "imperial",
       days: 5,
       hours: 24,
       activity: "walk",
+      durationHours: 2,
+      targetLocalTime: "07:00",
+      targetDayOffset: 1,
       query: "current forecast",
     });
   });
@@ -35,7 +41,6 @@ describe("sanitizeTraceArguments", () => {
 
     expect(result).toEqual({
       query: "Email [email] with [redacted] from [coordinates]",
-      locations: "[email], [redacted], [coordinates]",
     });
     expect(JSON.stringify(result)).not.toMatch(/jacob|private-value|secret-value|35\.7796/);
   });
@@ -43,6 +48,15 @@ describe("sanitizeTraceArguments", () => {
   it("drops unsupported values and bounds displayed values", () => {
     expect(sanitizeTraceArguments({ query: { nested: "private" }, unknown: "private" })).toBeUndefined();
     expect(sanitizeTraceArguments({ query: "x".repeat(250) })?.query).toBe("x".repeat(200));
+    expect(
+      sanitizeTraceArguments({
+        durationHours: 100,
+        targetLocalTime: "not-a-time",
+        targetDayOffset: -1,
+        hours: 241,
+        days: 11,
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -61,7 +75,7 @@ describe("createTrace", () => {
     });
 
     expect(trace.id).toBeTruthy();
-    expect(trace.arguments).toEqual({ location: "Raleigh, NC" });
+    expect(trace.arguments).toBeUndefined();
     expect(JSON.stringify(trace)).not.toContain("private-key");
   });
 });

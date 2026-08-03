@@ -113,7 +113,7 @@ describe("structuredOutputFromInteraction", () => {
 
 describe("runGeminiRetrieval", () => {
   it("passes a requested seven-day Seattle outlook to the weather executor", async () => {
-    const { client } = fakeClient([
+    const { client, requests } = fakeClient([
       weatherArgumentsResponse("seattle", {
         locations: ["Seattle, WA"],
         hours: 24,
@@ -136,6 +136,16 @@ describe("runGeminiRetrieval", () => {
       hours: 24,
       days: 7,
       units: "metric",
+    });
+    const weatherTool = (requests[0]?.tools as Array<Record<string, unknown>>).find(
+      (tool) => tool.name === "get_weather_bundle",
+    );
+    expect(weatherTool?.parameters).toMatchObject({
+      oneOf: [
+        expect.objectContaining({ required: ["location"] }),
+        expect.objectContaining({ required: ["locations"] }),
+        expect.objectContaining({ required: ["latitude", "longitude"] }),
+      ],
     });
   });
 
@@ -194,6 +204,124 @@ describe("runGeminiRetrieval", () => {
       targetLocalTime: "07:00",
       targetDayOffset: 1,
     });
+  });
+
+  it("caps aggregate weather locations across multiple function calls", async () => {
+    const { client } = fakeClient([
+      weatherArgumentsResponse("first-group", {
+        locations: ["Raleigh, NC", "Seattle, WA", "Denver, CO"],
+      }),
+      weatherArgumentsResponse("second-group", {
+        locations: ["Miami, FL", "Boston, MA"],
+      }),
+      completedResponse("too-many-locations-complete"),
+    ]);
+    const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
+
+    await expect(
+      runGeminiRetrieval({
+        gemini: client,
+        prompt: "Compare Raleigh, Seattle, Denver, Miami, and Boston.",
+        clientContext,
+        executeWeather,
+      }),
+    ).rejects.toThrow("more than 4 weather locations");
+
+    expect(executeWeather).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds the number of weather function calls in a single tool round", async () => {
+    const calls = Array.from({ length: 5 }, (_, index) => ({
+      type: "function_call" as const,
+      id: `weather-call-${index + 1}`,
+      name: "get_weather_bundle",
+      arguments: { location: `City ${index + 1}` },
+    }));
+    const { client } = fakeClient([
+      {
+        id: "interaction-many-calls",
+        status: "requires_action",
+        steps: calls,
+      },
+    ]);
+    const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
+
+    await expect(
+      runGeminiRetrieval({
+        gemini: client,
+        prompt: "Compare several cities.",
+        clientContext,
+        executeWeather,
+      }),
+    ).rejects.toThrow("more than 4 weather tool calls");
+    expect(executeWeather).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    ["fractional hours", { locations: ["Seattle, WA"], hours: 24.5 }],
+    ["excess daily range", { locations: ["Seattle, WA"], days: 11 }],
+    ["fractional duration", { locations: ["Denver, CO"], durationHours: 1.5 }],
+  ])("rejects malformed integer weather arguments: %s", async (_label, arguments_) => {
+    const { client } = fakeClient([
+      weatherArgumentsResponse("malformed-range", arguments_),
+      completedResponse("malformed-range-complete"),
+    ]);
+    const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
+
+    await expect(
+      runGeminiRetrieval({
+        gemini: client,
+        prompt: "Show the weather.",
+        clientContext,
+        executeWeather,
+      }),
+    ).rejects.toBeInstanceOf(GeminiProviderError);
+    expect(executeWeather).not.toHaveBeenCalled();
+  });
+
+  it("rejects mixed named-location modes", async () => {
+    const { client } = fakeClient([
+      weatherArgumentsResponse("mixed-location", {
+        location: "Raleigh, NC",
+        locations: ["Seattle, WA"],
+      }),
+      completedResponse("mixed-location-complete"),
+    ]);
+    const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
+
+    await expect(
+      runGeminiRetrieval({
+        gemini: client,
+        prompt: "Show Raleigh and Seattle weather.",
+        clientContext,
+        executeWeather,
+      }),
+    ).rejects.toBeInstanceOf(GeminiProviderError);
+    expect(executeWeather).not.toHaveBeenCalled();
+  });
+
+  it("rejects a requested target window that exceeds the 240-hour provider horizon", async () => {
+    const { client } = fakeClient([
+      weatherArgumentsResponse("target-too-far", {
+        locations: ["Denver, CO"],
+        activity: "run",
+        durationHours: 6,
+        targetLocalTime: "23:30",
+        targetDayOffset: 9,
+      }),
+      completedResponse("target-too-far-complete"),
+    ]);
+    const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
+
+    await expect(
+      runGeminiRetrieval({
+        gemini: client,
+        prompt: "Plan a six-hour run at 11:30 PM nine days from now in Denver.",
+        clientContext,
+        executeWeather,
+      }),
+    ).rejects.toBeInstanceOf(GeminiProviderError);
+    expect(executeWeather).not.toHaveBeenCalled();
   });
 
   it("replays every signed step unchanged before the matching function result", async () => {

@@ -214,4 +214,48 @@ describe("executeWeather", () => {
       ],
     });
   });
+
+  it.each([
+    ["fractional hours", { locations: ["Seattle, WA"], hours: 24.5, units: "imperial" }],
+    ["excess daily range", { locations: ["Seattle, WA"], days: 11, units: "imperial" }],
+    [
+      "fractional activity duration",
+      { locations: ["Seattle, WA"], durationHours: 1.5, units: "imperial" },
+    ],
+  ] satisfies Array<[string, GetWeatherBundleArguments]>)(
+    "rejects malformed provider ranges instead of changing them: %s",
+    async (_label, args) => {
+      const seattle = { name: "Seattle, WA", latitude: 47.6062, longitude: -122.3321 };
+      providerMocks.geocodeLocations.mockResolvedValue([seattle]);
+      providerMocks.getWeatherBundle.mockResolvedValue(bundle([seattle]));
+
+      await expect(
+        executeWeather(args, request, "maps-key", new AbortController().signal),
+      ).rejects.toBeInstanceOf(RangeError);
+      expect(providerMocks.getWeatherBundle).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects target windows beyond the 240-hour forecast horizon", async () => {
+    const denver = { name: "Denver, CO", latitude: 39.7392, longitude: -104.9903 };
+    providerMocks.geocodeLocations.mockResolvedValue([denver]);
+    providerMocks.getWeatherBundle.mockResolvedValue(bundle([denver], [], "America/Denver"));
+
+    await expect(
+      executeWeather(
+        {
+          locations: ["Denver, CO"],
+          units: "imperial",
+          activity: "run",
+          durationHours: 6,
+          targetLocalTime: "23:30",
+          targetDayOffset: 9,
+        },
+        request,
+        "maps-key",
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("240-hour");
+    expect(providerMocks.getWeatherBundle).not.toHaveBeenCalled();
+  });
 });

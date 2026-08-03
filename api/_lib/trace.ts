@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { TraceRecordSchema, type TraceRecord } from "../../shared/schemas.js";
 
 const SAFE_ARGUMENT_KEYS = new Set([
-  "locations",
-  "location",
   "units",
   "days",
   "hours",
   "activity",
+  "durationHours",
+  "targetLocalTime",
+  "targetDayOffset",
   "query",
 ]);
 
@@ -27,6 +28,35 @@ function safeScalar(value: unknown): string | number | boolean | null | undefine
     .slice(0, 200);
 }
 
+function integerArgument(value: unknown, minimum: number, maximum: number): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= minimum && value <= maximum
+    ? value
+    : undefined;
+}
+
+function semanticArgument(
+  key: string,
+  value: unknown,
+): string | number | boolean | null | undefined {
+  if (key === "hours") return integerArgument(value, 1, 240);
+  if (key === "days") return integerArgument(value, 1, 10);
+  if (key === "durationHours") return integerArgument(value, 1, 6);
+  if (key === "targetDayOffset") return integerArgument(value, 0, 9);
+  if (key === "units") {
+    return value === "imperial" || value === "metric" ? value : undefined;
+  }
+  if (key === "targetLocalTime") {
+    return typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)
+      ? value
+      : undefined;
+  }
+  if (key === "activity") {
+    const safe = safeScalar(value);
+    return typeof safe === "string" ? safe.slice(0, 60) : undefined;
+  }
+  return safeScalar(value);
+}
+
 export function sanitizeTraceArguments(
   input: Record<string, unknown> | undefined,
 ): Record<string, string | number | boolean | null> | undefined {
@@ -34,12 +64,8 @@ export function sanitizeTraceArguments(
   const output: Record<string, string | number | boolean | null> = {};
   for (const [key, value] of Object.entries(input)) {
     if (!SAFE_ARGUMENT_KEYS.has(key)) continue;
-    if (Array.isArray(value)) {
-      const rendered = value.map(safeScalar).filter((item) => item !== undefined).join(", ");
-      if (rendered) output[key] = rendered.slice(0, 200);
-      continue;
-    }
-    const safe = safeScalar(value);
+    if (Array.isArray(value)) continue;
+    const safe = semanticArgument(key, value);
     if (safe !== undefined) output[key] = safe;
   }
   return Object.keys(output).length > 0 ? output : undefined;
