@@ -19,7 +19,9 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "eval": "vitest run src/evals"
+    "eval": "vitest run src/evals",
+    "eval:ui": "vitest run src/evals/ui-quality.test.ts src/evals/ui-quality-fixtures.test.ts src/evals/ui-quality-live-runner.test.ts",
+    "eval:ui:live": "RUN_LIVE_UI_EVALS=true vitest run src/evals/ui-quality-live.test.ts"
   },
   "dependencies": {
     "@a2ui/markdown-it": "0.1.0",

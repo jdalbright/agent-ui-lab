@@ -7,6 +7,16 @@ import type {
   SemanticSignal,
 } from "./types.js";
 
+export { UI_QUALITY_CASES } from "./ui-quality-cases.js";
+export type {
+  UiContentBudget,
+  UiDensity,
+  UiEmphasis,
+  UiQualityCase,
+  UiRecipeId,
+  UiRequiredFact,
+} from "./ui-quality-cases.js";
+
 export const CATEGORY_COUNTS = {
   weather: 6,
   comparison: 6,
