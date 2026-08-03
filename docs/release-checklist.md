@@ -19,13 +19,34 @@ Use this checklist for the first public release and subsequent production change
 - [ ] `npm run lint`
 - [ ] `npm run test:run`
 - [ ] `npm run eval`
+- [ ] `npm run eval:ui`
 - [ ] `npm run build`
 - [ ] `npm run test:e2e`
 - [ ] The 40-prompt evaluation has zero unknown components and zero unsafe URLs.
 - [ ] Every evaluation produces a valid surface or the deterministic safe fallback.
 - [ ] Every research evidence item references a source ID supplied by the server.
+- [ ] All 18 recorded plan/evidence pairs validate, compile with the production SurfacePlan compiler, pass SurfaceSpec validation, and pass the deterministic quality linter.
+- [ ] The quality linter confirms answer-first hierarchy, sources-last ordering, requested coverage, chart/table alignment, source closure, and bounded density.
+- [ ] The 36 recipe/viewport screenshots match their checked-in references with no serious/critical axe findings or document overflow.
 
-The default test suite must use recorded Gemini Search, Geocoding, and Weather fixtures. Run live-provider checks separately so CI is deterministic and does not consume provider quota.
+`npm run eval:ui` runs the compiler-backed semantic fixtures, production build, and 36 Chromium screenshot cases. The default test suite and CI must use recorded Gemini Search, Geocoding, and Weather fixtures. CI must not receive provider secrets or run `npm run eval:ui:live`. Run that opt-in command separately: it uses live Gemini composition for 54 samples but keeps Search, Geocoding, and Weather evidence recorded.
+
+## Surface Quality preview acceptance
+
+- [ ] Production remains unset or explicitly set to `SURFACE_COMPOSER_VERSION=spec-v1` while preview review is in progress.
+- [ ] A Vercel preview is configured with `SURFACE_COMPOSER_VERSION=plan-v2`.
+- [ ] The preview has scoped live Gemini and Google Maps provider keys and reports live mode rather than replaying recorded fixtures.
+- [ ] The preview selects each of the nine recipes for at least one representative prompt.
+- [ ] Intent changes produce the expected structural change rather than random visual variation.
+- [ ] One-to-four-location retrieval, bounded activity/time requests, and supported presentation ranges preserve their evidence: up to 24 hourly/10 daily Weather entries or 12 weather-comparison forecast points.
+- [ ] Weather-backed comparisons use evidence-derived measurements, aligned table/chart references, and complete server-issued sources.
+- [ ] Requested locations, units, time ranges, comparison criteria, and cited evidence are preserved at every target width.
+- [ ] The inspector reports only recipe, density, emphasis, quality-check outcomes, repair category, compiler result, counts, and timings.
+- [ ] Invalid first-pass plans receive one replacement repair; a second failure produces the appropriate deterministic domain recipe.
+- [ ] Every plan has exactly one final Sources module; every content citation is listed and every listed ID was issued by the server.
+- [ ] The original `spec-v1` path remains smoke-tested as the rollback target.
+- [ ] If the opt-in live benchmark is run, record its first-pass validity, repair, fallback, latency, recipe selection, and structural-fingerprint results without logging prompts or evidence bodies.
+- [ ] Do not publish the ≥95% first-pass target as achieved until at least 52 of the 54 observed samples pass first validation.
 
 ## Interaction and accessibility
 
@@ -37,6 +58,9 @@ The default test suite must use recorded Gemini Search, Geocoding, and Weather f
 - [ ] Run axe checks with no serious or critical findings.
 - [ ] Check 320px, 390px, 768px, and 1440×1024 viewports with no horizontal overflow.
 - [ ] Compare first load, weather answer, inspector, and mobile reflow screenshots with the approved visual concepts.
+- [ ] Compare the checked-in reference surface for each of the nine recipes at 320px, 390px, 768px, and 1440px.
+- [ ] Confirm each reference surface preserves its supported requested range and has no serious or critical axe findings.
+- [ ] A human reviews every live Vercel preview recipe at all four widths and records at least 4/5 for relevance, hierarchy, scanability, and visual balance; checked-in screenshots or model scores are not sufficient approval.
 - [ ] Measure the deterministic shell with Lighthouse and confirm accessibility 100 and scores of at least 90 for the other required categories before recording the result.
 
 ## Production environment
@@ -48,13 +72,17 @@ The default test suite must use recorded Gemini Search, Geocoding, and Weather f
 - [ ] A complete Upstash REST pair (`UPSTASH_REDIS_REST_*` or Vercel-managed `KV_REST_API_*`) is configured; production is not relying on process-local rate-limit state.
 - [ ] `ALLOWED_ORIGINS` contains only exact intended origins.
 - [ ] `ALLOW_DEMO_FIXTURES` is false or unset.
+- [ ] `SURFACE_COMPOSER_VERSION` is independently reviewed for preview and production; unknown values fail configuration validation.
 - [ ] Vercel preview and production environment scopes are reviewed independently.
 - [ ] Gemini retrieval and composition still set `store: false`.
 - [ ] Provider keys, prompt bodies, coordinates, provider steps, and context tokens are absent from logs.
 
 ## Deploy and smoke test
 
+- [ ] Deploy the verified build to a Vercel preview with `SURFACE_COMPOSER_VERSION=plan-v2` and record the immutable preview URL.
+- [ ] Record explicit human approval for all nine live preview recipes before changing production.
 - [ ] Deploy the verified build with `vercel --prod` and record the immutable deployment URL.
+- [ ] Set production to `SURFACE_COMPOSER_VERSION=plan-v2` only after preview acceptance, then redeploy so the immutable deployment contains the reviewed configuration.
 - [ ] Check `GET /api/health` on the production deployment.
 - [ ] Submit a live weather prompt and confirm current provider mode, source attribution, and the deterministic activity recommendation.
 - [ ] Submit a grounded research prompt and confirm every evidence item resolves to an immutable HTTPS source.
@@ -65,6 +93,8 @@ The default test suite must use recorded Gemini Search, Geocoding, and Weather f
 - [ ] Attach `lab.jalbright.dev` only after the direct deployment URL passes.
 - [ ] Repeat the smoke tests against the exact `https://lab.jalbright.dev` origin.
 - [ ] Confirm the custom domain is the origin in the browser request and is accepted by the API allowlist.
+- [ ] Confirm the production inspector identifies the selected recipe and compiler result without exposing model reasoning.
+- [ ] Exercise rollback by restoring `SURFACE_COMPOSER_VERSION=spec-v1` in the correct environment scope; keep this flag until the rollout has demonstrated stability.
 
 ## Portfolio release
 

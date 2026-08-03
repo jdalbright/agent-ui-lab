@@ -17,12 +17,18 @@ flowchart LR
     D -->|"grounding"| F["Google Search"]
     E --> G["Normalized evidence and sources"]
     F --> G
-    G --> H["Gemini composition interaction, no tools"]
-    H --> I["SurfaceSpec schema and graph validation"]
-    I -->|"one repair allowed"| H
-    I --> J["A2UI v0.9.1 compiler"]
+    G --> V{"SURFACE_COMPOSER_VERSION"}
+    V -->|"spec-v1 default"| S["emit_surface_spec and SurfaceSpec validation"]
+    V -->|"plan-v2"| H["emit_surface_plan, no retrieval tools"]
+    H --> I["SurfacePlan schema, evidence, source, and quality validation"]
+    I -->|"one replacement repair allowed"| H
+    I --> K["Deterministic SurfacePlan to SurfaceSpec compiler"]
+    I -->|"second failure"| L["Domain-specific deterministic plan"]
+    L --> K
+    S --> J["SurfaceSpec to A2UI v0.9.1 compiler"]
+    K --> J
     J -->|"NDJSON status, trace, A2UI, context, done"| A
-    A --> K["Trusted React catalog"]
+    A --> M["Trusted React catalog"]
 ```
 
 ### 1. Client request
@@ -46,17 +52,54 @@ The first Gemini Interactions call uses `gemini-3.6-flash`, the stable `v1` API,
 
 Custom function arguments are schema-validated. Stateless continuation appends every returned interaction step and the matching function result to the next request. No more than two custom-tool rounds are allowed.
 
-Weather retrieval resolves a human-readable location, or reverse-geocodes coordinates that were explicitly approved by the browser. It requests current conditions, 24 hourly entries, five daily entries, and public alerts, then normalizes units and timestamps. Activity windows are scored deterministically in server code rather than delegated to the model.
+Weather retrieval accepts one legacy location, an ordered list of one to four named locations, or one coordinate pair that matches coordinates explicitly approved by the browser. Named places are de-duplicated, geocoded in request order, and fetched as one bounded bundle. Across all function calls, a request may cover no more than four weather locations and two custom-tool rounds.
+
+Each location returns current conditions, public alerts, and the requested retrieval range. Hourly retrieval supports 1–240 records and daily retrieval supports 1–10; defaults are 24 hourly records and seven daily records. A Weather surface can reference up to 24 hourly or 10 daily entries, while weather-comparison tables/charts can reference up to 12 forecast points. Longer hourly retrieval exists for future activity targets, not a 240-row presentation. Validation checks supported requested display ranges for every evidence-backed location instead of silently truncating them.
+
+Activity retrieval preserves an activity label, a whole-hour duration from one through six, and—when supplied—a local `HH:MM` start and day offset from zero through nine. The server expands the hourly request when needed and deterministically scores the best or specifically requested window for each location, including weather-alert and incomplete-safety-data penalties. The model may reference a scored window but does not calculate it.
 
 Geocoding and weather maintain bounded, in-process caches keyed by normalized place/forecast inputs, not by user identity. Entries default to five minutes, are capped at fifteen minutes, and are limited to 128 geocoding and 64 weather entries respectively.
 
 Google Search citations and weather attribution are converted to `SourceRecord` objects. Source IDs are derived by hashing canonical HTTPS URLs. The collection is deduplicated, capped at eight, and treated as immutable evidence for composition.
 
-### 4. Composition
+### 4. Composition and recipe selection
 
-A separate Gemini interaction receives the user request, semantic client context, evidence summary, normalized weather evidence, and source records. It has no retrieval or action tools; its only available function is the declarative `emit_surface_spec` schema adapter. The returned arguments must match the catalog's `SurfaceSpec` schema. This keeps retrieval/tool use separate from final structured composition while avoiding dependence on the Interactions API response-format transport.
+A separate Gemini interaction receives the user request, semantic client context, evidence summary, normalized weather evidence, and source records. It has no retrieval or action tools. When `plan-v2` is selected, its only available function is the declarative `emit_surface_plan` schema adapter. The returned `SurfacePlan` discriminated union contains `kind`, `recipeId`, `density`, `emphasis`, and ordered capability-specific modules.
 
-The validator rejects:
+The planner chooses from nine bounded recipes:
+
+| Recipe | Intended use | Misuse warning |
+| --- | --- | --- |
+| `weather.snapshot` | Current or single-moment conditions. | Do not use when the user is making an activity decision or requests a range. |
+| `weather.decision` | A deterministic activity window or risk-aware recommendation. | Do not invent a recommendation from prose; it must reference normalized activity evidence. |
+| `weather.outlook` | Requested hourly or daily ranges and trends. | Do not shorten a requested range to make a compact layout easier. |
+| `comparison.verdict` | A direct winner or recommendation supported by criteria. | Do not force a winner when the evidence is genuinely balanced. |
+| `comparison.scorecard` | Balanced, criteria-by-criteria trade-offs. | Do not use decorative scores that are absent from evidence. |
+| `comparison.trend` | Time-series movement or changing measurements. | Do not use a chart without an aligned table alternative. |
+| `research.brief` | A concise answer with prioritized evidence. | Do not bury the answer below sources or background prose. |
+| `research.timeline` | Events where chronology answers the question. | Do not use for unordered claims merely to add visual variety. |
+| `research.claims` | Support/challenge/neutral evidence around a claim. | Do not assign stance without a cited source ID. |
+
+Each recipe has compatible modules, a defining primary module, selection rules, and content bounds. Weather modules reference normalized location, hourly, daily, alert, and deterministic activity-window records by index; the compiler copies measurements rather than trusting model-authored values. Comparison and research claims reference immutable server-issued source IDs. URLs never enter a plan.
+
+When retrieval contains weather evidence for a comparison, every Summary, Table, and Chart module must use bounded `locationIndexes`, forecast indexes/kind, metric enums, and source IDs. Model-authored measurement items, table rows/columns, chart labels, and chart series are rejected for that path. The compiler derives those values from the normalized bundle, and a chart/table pair must carry exactly aligned location, range, and metric references.
+
+Source validation is closed over server evidence. A plan has exactly one final Sources module; every source used by content, weather attribution, or an alert authority must appear there, and every final ID must exist in the server-issued source collection. URLs remain exclusively in immutable `SourceRecord` objects outside the plan.
+
+The validator checks recipe-to-kind fit, module compatibility and order, evidence references, requested location/unit/range/activity coverage, source closure, chart/table alignment, and content budgets. The schema caps a plan at 16 modules; quality validation lowers the effective limit to 6, 9, or 12 modules for `brief`, `balanced`, or `detailed`, and estimates the compiled graph against the 60-node catalog limit. SurfaceSpec validation independently retains the 60-node and six-level graph limits.
+
+One complete replacement repair is allowed for schema, semantic, quality, evidence, source, or compilation failure. If the replacement also fails, server code builds a deterministic Weather Snapshot, Comparison Verdict, or Research Brief from available trusted evidence and compiles it through the same validator. If the evidence needed by that domain fallback is unavailable, the outer request pipeline returns the bounded narrative fallback instead.
+
+The feature flag preserves the original path during rollout:
+
+| `SURFACE_COMPOSER_VERSION` | Behavior |
+| --- | --- |
+| unset or `spec-v1` | Default. Gemini calls `emit_surface_spec`, followed by the existing SurfaceSpec validation and A2UI compiler. |
+| `plan-v2` | Weather, Comparison, and Research call `emit_surface_plan`, then use deterministic `SurfacePlan → SurfaceSpec → A2UI` compilation. Other bounded paths remain on `spec-v1`. |
+
+An unknown flag value fails runtime configuration validation. Preview acceptance precedes production enablement, and setting production back to `spec-v1` is the immediate rollback.
+
+Independent SurfaceSpec and graph validation still reject:
 
 - unknown components or props
 - duplicate, missing, unreachable, cyclic, or over-nested component graphs
@@ -64,9 +107,20 @@ The validator rejects:
 - unknown source IDs, non-HTTPS sources, or more than eight sources
 - values outside each component's semantic bounds
 
-One complete replacement repair is allowed. A provider, validation, or rendering failure produces a stable error and, when possible, a deterministic read-only narrative surface.
+A provider or rendering failure produces a stable error and, when possible, a deterministic read-only surface.
 
-### 5. A2UI compilation and rendering
+### 5. Trusted visual grammar and A2UI rendering
+
+The custom catalog ID is `https://lab.jalbright.dev/catalogs/editorial/v2`; the wire protocol remains A2UI v0.9.1. Every Phase 2 graph begins with `SurfaceFrame`, whose `recipeId`, `density`, and `emphasis` props are closed enums. The compiler may combine trusted `Split`, `Rail`, `Metric`, heading, divider, and band primitives, but it cannot introduce component names or style strings.
+
+Semantic presentation variants are also closed enums:
+
+- Weather hero: `snapshot | decision`; hourly: `strip | chart`; daily: `cards | table`
+- Comparison summary: `verdict | balanced`; chart: `line | bar`
+- Research lead: `feature | brief`; evidence: `stack | grid | for-against`
+- Evidence stance: `support | challenge | neutral`
+
+React and application-owned CSS/container queries implement the variants at `compact`, `medium`, and `expanded` sizes. Compact layouts may reduce surrounding prose, but they must preserve every supported requested day, hour, location, criterion, and evidence item. Charts retain keyboard-accessible textual or table alternatives.
 
 A validated spec compiles into exactly three A2UI v0.9.1 messages:
 
@@ -91,7 +145,17 @@ The API writes one JSON object per line. Each object must match one of these var
 | `error` | A stable code, safe user-facing message, and retryability. |
 | `done` | Request ID, completion time, duration, mode, component count, and source count. |
 
-The inspector never receives provider steps, hidden instructions, or model reasoning.
+Safe presentation trace metadata is restricted to approved recipe, density, emphasis, bounded quality-check outcomes, repair category, compiler result, component/source counts, and timings. The inspector never receives prompt or evidence bodies, provider steps, hidden instructions, or model reasoning.
+
+## UI-quality verification
+
+The existing 40-prompt evaluation remains the hard safety contract. The additional 18 recorded-evidence cases—two per recipe—are compiler-backed: each recorded SurfacePlan is validated against its recorded retrieval evidence, compiled by the production `compileSurfacePlan`, validated as a SurfaceSpec, and checked by the deterministic quality linter. The cases assert required facts, recipe fit, defining modules, ordering, density, requested location/range coverage, chart/table alignment, source closure, and content budgets.
+
+`npm run eval:ui` runs the semantic/linter and compiler-backed fixture suites plus live-runner unit tests, builds the production app, and then runs the nine recipe prompts in desktop Chromium at 320, 390, 768, and 1440 pixels. Those 36 browser cases compare checked-in screenshots, emulate reduced motion, reject document overflow, and run axe with no serious or critical findings.
+
+`npm run eval:ui:live` sets the explicit live-evaluation guard and asks Gemini to compose each of the 18 cases three times against the same recorded retrieval evidence. Each of the 54 outputs is validated and compiled by production code, then reported with first-pass validity, repair/fallback status, latency, recipe selection, and a structural fingerprint. The test requires at least 95% first-pass validity, zero domain fallbacks, all samples valid, and coverage of all nine recipes. It runs no live Search, Geocoding, or Weather request. Without `GEMINI_API_KEY`, the guarded test stays disabled.
+
+Checked-in screenshots are regression references, not proof of subjective quality. Before `plan-v2` can replace the production default, a human must inspect the live Vercel preview at the same four widths and approve every recipe for relevance, hierarchy, scanability, and visual balance. No approval score or live reliability metric should be published until it is observed and recorded.
 
 ## Operating modes
 
@@ -108,8 +172,9 @@ Production should have both provider keys, both Upstash variables, a strong cont
 - Gemini interactions use `store: false` for retrieval and composition.
 - Optional context is a versioned AES-256-GCM token with a random 96-bit IV, authenticated associated data, a 30-minute expiry, and no more than three sanitized summaries.
 - Summary sanitization removes control characters and redacts email addresses, phone numbers, credential-like assignments, and coordinate pairs.
-- Trace arguments use an allowlist (`locations`, `location`, `units`, `days`, `hours`, `activity`, and `query`) and apply equivalent redaction and length limits.
+- Trace arguments use an allowlist (`units`, `days`, `hours`, `activity`, `durationHours`, `targetLocalTime`, `targetDayOffset`, and `query`) and apply equivalent redaction and range limits. Location names and coordinates are omitted.
 - Structured application logs do not intentionally include prompt bodies, coordinates, provider steps, keys, or tokens.
+- Presentation logs allow only recipe ID, density, emphasis, validation category, component count, latency, and repair count; evidence bodies remain excluded.
 - API keys exist only in the function environment. No client variable uses a `VITE_` prefix.
 - The renderer has no component for raw HTML, CSS, scripts, arbitrary URLs, or arbitrary event handlers.
 - Research evidence must point to a server-owned source ID. Resolved source links are HTTPS only.
@@ -122,7 +187,7 @@ api/                    Vercel Functions, provider adapters, fixtures, and serve
 shared/                 Request/event schemas, catalog limits, validation, compiler, demo specs
 src/components/shell/   Deterministic application chrome and trace inspector
 src/lib/a2ui/           Trusted catalog, message validation, and renderer adapter
-src/evals/              40-prompt safety and contract evaluation set
+src/evals/              40-prompt safety suite and 18-case UI-quality benchmark
 src/styles/             Editorial design tokens and global responsive styles
 public/assets/           Self-owned visual assets
 docs/                   Architecture and release guidance
@@ -135,7 +200,7 @@ An extension is complete only when retrieval, evidence, presentation, and verifi
 1. Define a narrowly scoped server tool with strict arguments and a maximum number of rounds.
 2. Normalize provider output into a bounded evidence type; create source IDs from server-resolved HTTPS URLs.
 3. Add semantic props and an accessible React implementation to the trusted catalog. Do not accept style strings or raw markup.
-4. Extend both the Gemini response schema and the independent Zod/client validators.
+4. Add a bounded planner recipe/module contract and extend the independent Zod/client validators.
 5. Add deterministic fixture data, provider normalization tests, compiler tests, component accessibility tests, adversarial evaluation prompts, and desktop/mobile checks.
 
 External writes require a separate product and security design; they are not an incremental catalog addition to this read-only version.
