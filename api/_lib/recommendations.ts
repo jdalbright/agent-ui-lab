@@ -16,6 +16,10 @@ export interface ActivityScoringOptions {
 export interface ActivityWindowOptions extends ActivityScoringOptions {
   activity?: string;
   durationHours?: number;
+  targetLocalTime?: string;
+  targetDayOffset?: number;
+  timeZone?: string;
+  referenceTime?: string;
 }
 
 export interface ActivityWindowScore {
@@ -224,6 +228,93 @@ function isConsecutiveWindow(hours: readonly NormalizedHourlyForecast[]): boolea
   return true;
 }
 
+interface LocalDateTime {
+  date: string;
+  hour: number;
+}
+
+function localDateTime(instant: string, timeZone: string): LocalDateTime {
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime())) throw new RangeError("referenceTime must be a valid timestamp.");
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
+  } catch {
+    throw new RangeError("timeZone must be a valid IANA time zone.");
+  }
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((candidate) => candidate.type === type)?.value ?? "";
+  const year = Number(part("year"));
+  const month = Number(part("month"));
+  const day = Number(part("day"));
+  const hour = Number(part("hour"));
+  if (![year, month, day, hour].every(Number.isInteger)) {
+    throw new RangeError("Unable to resolve the requested local time.");
+  }
+  return {
+    date: `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    hour,
+  };
+}
+
+function addLocalCalendarDays(date: string, offset: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const target = new Date(Date.UTC(year, month - 1, day + offset));
+  return target.toISOString().slice(0, 10);
+}
+
+function requestedActivityWindow(
+  sortedHours: readonly NormalizedHourlyForecast[],
+  options: ActivityWindowOptions,
+  activity: string,
+  durationHours: number,
+): ActivityWindowRecommendation | null {
+  if (!options.targetLocalTime) return null;
+  if (
+    options.targetDayOffset === undefined ||
+    !Number.isInteger(options.targetDayOffset) ||
+    options.targetDayOffset < 0 ||
+    options.targetDayOffset > 9
+  ) {
+    throw new RangeError("targetDayOffset must be an integer from 0 through 9.");
+  }
+  if (!options.timeZone || !options.referenceTime) return null;
+  const timeMatch = /^(?:[01]\d|2[0-3]):[0-5]\d$/.exec(options.targetLocalTime);
+  if (!timeMatch) throw new RangeError("targetLocalTime must use 24-hour HH:MM format.");
+  const [targetHour, targetMinute] = options.targetLocalTime.split(":").map(Number);
+  const referenceLocal = localDateTime(options.referenceTime, options.timeZone);
+  const targetDate = addLocalCalendarDays(referenceLocal.date, options.targetDayOffset);
+  const startIndex = sortedHours.findIndex((hour) => {
+    const local = localDateTime(hour.startTime, options.timeZone as string);
+    return local.date === targetDate && local.hour === targetHour;
+  });
+  if (startIndex < 0) return null;
+
+  const forecastHoursRequired = durationHours + (targetMinute > 0 ? 1 : 0);
+  const candidateHours = sortedHours.slice(startIndex, startIndex + forecastHoursRequired);
+  if (candidateHours.length !== forecastHoursRequired || !isConsecutiveWindow(candidateHours)) return null;
+
+  const candidateScore = scoreActivityWindow(candidateHours, options);
+  const startTimestamp = Date.parse(candidateHours[0].startTime) + targetMinute * 60 * 1_000;
+  const endTimestamp = startTimestamp + durationHours * 60 * 60 * 1_000;
+  return {
+    activity,
+    startTime: new Date(startTimestamp).toISOString(),
+    endTime: new Date(endTimestamp).toISOString(),
+    durationHours,
+    ...candidateScore,
+    label: `${durationHours}-hour ${activity} window at requested time`,
+    detail: candidateScore.reasons.join(" · "),
+  };
+}
+
 export function recommendActivityWindow(
   hours: readonly NormalizedHourlyForecast[],
   options: ActivityWindowOptions = {},
@@ -234,6 +325,9 @@ export function recommendActivityWindow(
   }
   const activity = options.activity?.trim() || "outdoor activity";
   const sortedHours = [...hours].sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime));
+  if (options.targetLocalTime) {
+    return requestedActivityWindow(sortedHours, options, activity, durationHours);
+  }
   let best: ActivityWindowRecommendation | null = null;
 
   for (let index = 0; index <= sortedHours.length - durationHours; index += 1) {
@@ -271,13 +365,24 @@ export function recommendWalkWindow(
 
 export function scoreActivityWindows(
   bundle: WeatherBundle,
-  activity = "walk",
+  activityOrOptions: string | ActivityWindowOptions = "walk",
 ): LocationActivityWindowRecommendation[] {
+  const options =
+    typeof activityOrOptions === "string"
+      ? { activity: activityOrOptions }
+      : { ...activityOrOptions };
   return bundle.locations.flatMap((locationWeather) => {
     const recommendation = recommendActivityWindow(locationWeather.hourly, {
-      activity,
-      durationHours: 2,
+      ...options,
+      activity: options.activity ?? "walk",
+      durationHours: options.durationHours ?? 2,
       alerts: locationWeather.alerts,
+      ...(options.targetLocalTime
+        ? {
+            timeZone: locationWeather.current.timeZone,
+            referenceTime: locationWeather.current.observedAt,
+          }
+        : {}),
     });
     return recommendation ? [{ location: locationWeather.location, ...recommendation }] : [];
   });

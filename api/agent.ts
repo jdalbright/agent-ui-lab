@@ -109,55 +109,102 @@ function contextualPrompt(request: AgentRequest, priorTurns: readonly TurnSummar
   return `${request.prompt}\n\n${prefix}${context.slice(0, remaining)}`;
 }
 
-async function executeWeather(
+function boundedInteger(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.round(value)));
+}
+
+function namedWeatherQueries(args: Readonly<GetWeatherBundleArguments>): string[] {
+  const requested = [args.location, ...(args.locations ?? [])]
+    .flatMap((location) => (typeof location === "string" ? [location.trim()] : []))
+    .filter(Boolean);
+  const unique = new Map<string, string>();
+  for (const location of requested) {
+    const key = location.toLocaleLowerCase("en-US");
+    if (!unique.has(key)) unique.set(key, location);
+  }
+  if (unique.size > LIMITS.locations) {
+    throw new RangeError(`A maximum of ${LIMITS.locations} locations is supported.`);
+  }
+  return [...unique.values()];
+}
+
+export async function executeWeather(
   args: Readonly<GetWeatherBundleArguments>,
   request: AgentRequest,
   apiKey: string,
   signal: AbortSignal,
 ): Promise<{ data: unknown; sources: readonly SourceRecord[] }> {
-  let location: WeatherLocation | undefined;
+  let locations: WeatherLocation[] = [];
   const approvedCoordinates = request.client.coordinates;
+  const namedQueries = namedWeatherQueries(args);
+  const hasRequestedCoordinates = args.latitude !== undefined && args.longitude !== undefined;
 
-  if (approvedCoordinates && args.latitude !== undefined && args.longitude !== undefined) {
+  if (approvedCoordinates && hasRequestedCoordinates && namedQueries.length === 0) {
     const resolved = await reverseGeocodeLocation(
       { latitude: approvedCoordinates.latitude, longitude: approvedCoordinates.longitude },
       { apiKey, locale: request.client.locale, signal },
     );
-    location = {
-      name: resolved?.name || "Current location",
-      latitude: approvedCoordinates.latitude,
-      longitude: approvedCoordinates.longitude,
-      ...(resolved?.placeId ? { placeId: resolved.placeId } : {}),
-    };
-  } else if (args.location) {
-    const [resolved] = await geocodeLocations({
-      queries: [args.location],
+    locations = [
+      {
+        name: resolved?.name || "Current location",
+        latitude: approvedCoordinates.latitude,
+        longitude: approvedCoordinates.longitude,
+        ...(resolved?.placeId ? { placeId: resolved.placeId } : {}),
+      },
+    ];
+  } else if (namedQueries.length > 0 && !hasRequestedCoordinates) {
+    const resolvedLocations = await geocodeLocations({
+      queries: namedQueries,
       apiKey,
       locale: request.client.locale,
       signal,
     });
-    if (resolved) {
-      location = {
+    if (resolvedLocations.length !== namedQueries.length) throw new LocationResolutionError();
+    locations = resolvedLocations.map((resolved) => ({
         name: resolved.name,
         latitude: resolved.latitude,
         longitude: resolved.longitude,
         ...(resolved.placeId ? { placeId: resolved.placeId } : {}),
-      };
-    }
+      }));
   }
 
-  if (!location) throw new LocationResolutionError();
+  if (locations.length === 0) throw new LocationResolutionError();
+  const durationHours = boundedInteger(args.durationHours, 2, 1, 6);
+  const targetDayOffset = boundedInteger(args.targetDayOffset, 0, 0, 9);
+  const minimumTargetHours = args.targetLocalTime
+    ? (targetDayOffset + 1) * 24 + durationHours - 1 + (args.targetLocalTime.endsWith(":00") ? 0 : 1)
+    : 0;
+  const hours = Math.max(boundedInteger(args.hours, 24, 1, 240), Math.min(240, minimumTargetHours));
+  const days = boundedInteger(args.days, 7, 1, 10);
   const bundle = await getWeatherBundle({
-    locations: [location],
+    locations,
     apiKey,
     locale: request.client.locale,
     units: args.units,
     signal,
-    hours: 24,
-    days: 5,
+    hours,
+    days,
   });
   return {
-    data: { ...bundle, activityWindows: scoreActivityWindows(bundle, "walk") },
+    data: {
+      ...bundle,
+      activityWindows: scoreActivityWindows(bundle, {
+        activity: args.activity ?? "walk",
+        durationHours,
+        ...(args.targetLocalTime
+          ? {
+              targetLocalTime: args.targetLocalTime,
+              targetDayOffset,
+            }
+          : {}),
+      }),
+    },
     sources: weatherSources(bundle),
   };
 }

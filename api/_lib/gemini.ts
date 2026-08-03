@@ -19,14 +19,22 @@ const WEATHER_TOOL = {
   type: "function",
   name: "get_weather_bundle",
   description:
-    "Gets normalized current conditions, hourly and daily forecasts, and public weather alerts for one location.",
+    "Gets normalized current conditions, requested hourly and daily forecasts, public alerts, and deterministic activity-window scores for one to four locations.",
   parameters: {
     type: "object",
     additionalProperties: false,
     properties: {
       location: {
         type: "string",
-        description: "A city, region, postal code, or other human-readable place name.",
+        description: "Legacy single city, region, postal code, or other human-readable place name.",
+      },
+      locations: {
+        type: "array",
+        minItems: 1,
+        maxItems: LIMITS.locations,
+        uniqueItems: true,
+        items: { type: "string", minLength: 1, maxLength: 200 },
+        description: "One to four named places, in the same order the user requested them.",
       },
       latitude: {
         type: "number",
@@ -41,6 +49,41 @@ const WEATHER_TOOL = {
       units: {
         type: "string",
         enum: ["imperial", "metric"],
+      },
+      hours: {
+        type: "integer",
+        minimum: 1,
+        maximum: 240,
+        description: "Number of hourly forecast records required by the request. Use 24 for a snapshot.",
+      },
+      days: {
+        type: "integer",
+        minimum: 1,
+        maximum: 10,
+        description: "Number of daily forecast records required by the request. Seven-day requests must use 7.",
+      },
+      activity: {
+        type: "string",
+        minLength: 1,
+        maxLength: 60,
+        description: "User-requested activity label, such as run, walk, hike, or outdoor dinner.",
+      },
+      durationHours: {
+        type: "integer",
+        minimum: 1,
+        maximum: 6,
+        description: "Requested activity duration in whole hours.",
+      },
+      targetLocalTime: {
+        type: "string",
+        pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+        description: "Optional requested local start time in 24-hour HH:MM format, such as 07:00.",
+      },
+      targetDayOffset: {
+        type: "integer",
+        minimum: 0,
+        maximum: 9,
+        description: "Optional local calendar-day offset: today is 0 and tomorrow is 1.",
       },
     },
   },
@@ -57,30 +100,76 @@ const RETRIEVAL_INSTRUCTION = [
   "Use get_weather_bundle for current conditions, forecasts, public alerts, or weather-dependent recommendations.",
   "Use google_search for current public-web facts, research, or comparisons that need source grounding.",
   "Use both tools when the request needs both weather data and broader current context.",
+  `For named weather comparisons, send all requested places in one locations array, with no more than ${LIMITS.locations} entries.`,
+  "Preserve explicitly requested hourly or daily ranges in hours and days; a seven-day outlook uses days=7.",
+  "For weather-dependent activities, preserve the user's activity label and whole-hour duration. If they name a time or relative day, also send targetLocalTime in local HH:MM form and targetDayOffset where today=0 and tomorrow=1.",
   "Do not invent tool results. After retrieval, return a concise factual evidence summary; do not generate UI component JSON.",
 ].join(" ");
+
+const clampedInteger = (minimum: number, maximum: number) =>
+  z
+    .number()
+    .finite()
+    .transform((value) => Math.min(maximum, Math.max(minimum, Math.round(value))));
 
 const WeatherArgumentsInputSchema = z
   .object({
     location: z.string().trim().min(1).max(200).optional(),
+    locations: z.array(z.string().trim().min(1).max(200)).min(1).max(LIMITS.locations).optional(),
     latitude: z.number().min(-90).max(90).optional(),
     longitude: z.number().min(-180).max(180).optional(),
     units: UnitsSchema.optional(),
+    hours: clampedInteger(1, 240).optional(),
+    days: clampedInteger(1, 10).optional(),
+    activity: z.string().trim().min(1).max(60).optional(),
+    durationHours: clampedInteger(1, 6).optional(),
+    targetLocalTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
+    targetDayOffset: clampedInteger(0, 9).optional(),
   })
   .strict()
   .superRefine((value, context) => {
     const hasLatitude = value.latitude !== undefined;
     const hasLongitude = value.longitude !== undefined;
+    const namedLocations = [value.location, ...(value.locations ?? [])].filter(
+      (location): location is string => Boolean(location),
+    );
+    const uniqueLocations = new Set(
+      namedLocations.map((location) => location.toLocaleLowerCase("en-US")),
+    );
     if (hasLatitude !== hasLongitude) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "latitude and longitude must be provided together",
       });
     }
-    if (!value.location && !hasLatitude) {
+    if (namedLocations.length === 0 && !hasLatitude) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "a location or coordinates are required",
+      });
+    }
+    if (namedLocations.length > LIMITS.locations) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `no more than ${LIMITS.locations} named locations are supported`,
+      });
+    }
+    if (uniqueLocations.size !== namedLocations.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "named locations must be unique",
+      });
+    }
+    if (hasLatitude && namedLocations.length > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "coordinates cannot be combined with named locations",
+      });
+    }
+    if (value.targetLocalTime && value.targetDayOffset === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "targetDayOffset is required with targetLocalTime",
       });
     }
   });
@@ -115,9 +204,16 @@ export interface GeminiStructuredOutputRequest {
 
 export interface GetWeatherBundleArguments {
   location?: string;
+  locations?: readonly string[];
   latitude?: number;
   longitude?: number;
   units: "imperial" | "metric";
+  hours?: number;
+  days?: number;
+  activity?: string;
+  durationHours?: number;
+  targetLocalTime?: string;
+  targetDayOffset?: number;
 }
 
 export interface WeatherToolExecutionResult {

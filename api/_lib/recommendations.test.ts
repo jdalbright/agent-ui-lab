@@ -66,6 +66,40 @@ describe("deterministic activity recommendations", () => {
     expect(recommendation?.startTime).toBe("2026-08-01T10:00:00.000Z");
   });
 
+  it("scores the requested Denver 7 AM run tomorrow instead of a generic best window", () => {
+    const hours = [
+      hour(19),
+      hour(20),
+      hour(37, {
+        conditionKey: "rain",
+        precipitationProbability: 60,
+        feelsLike: 84,
+      }),
+      hour(38, {
+        conditionKey: "rain",
+        precipitationProbability: 60,
+        feelsLike: 84,
+      }),
+    ];
+
+    const recommendation = recommendActivityWindow(hours, {
+      activity: "run",
+      durationHours: 1,
+      targetLocalTime: "07:00",
+      targetDayOffset: 1,
+      timeZone: "America/Denver",
+      referenceTime: "2026-08-01T18:00:00.000Z",
+    });
+
+    expect(recommendation).toMatchObject({
+      activity: "run",
+      startTime: "2026-08-02T13:00:00.000Z",
+      endTime: "2026-08-02T14:00:00.000Z",
+      durationHours: 1,
+      label: "1-hour run window at requested time",
+    });
+  });
+
   it("scores storms and overlapping severe alerts as unsafe", () => {
     const window = [
       hour(15, { conditionKey: "storms", precipitationProbability: 80, windGust: 35 }),

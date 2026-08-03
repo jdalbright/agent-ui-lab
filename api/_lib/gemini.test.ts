@@ -51,6 +51,33 @@ function functionCallResponse(id: string, signature: string): GeminiInteraction 
   };
 }
 
+function weatherArgumentsResponse(
+  id: string,
+  arguments_: Record<string, unknown>,
+): GeminiInteraction {
+  return {
+    id: `interaction_${id}`,
+    status: "requires_action",
+    steps: [
+      {
+        type: "function_call",
+        id,
+        name: "get_weather_bundle",
+        arguments: arguments_,
+      },
+    ],
+  };
+}
+
+function completedResponse(id: string): GeminiInteraction {
+  return {
+    id: `interaction_${id}`,
+    status: "completed",
+    output_text: "Weather evidence retrieved.",
+    steps: [{ type: "model_output", content: [{ type: "text", text: "Weather evidence retrieved." }] }],
+  };
+}
+
 describe("structuredOutputFromInteraction", () => {
   it("accepts exactly one declarative SurfaceSpec emission", () => {
     const interaction: GeminiInteraction = {
@@ -85,6 +112,90 @@ describe("structuredOutputFromInteraction", () => {
 });
 
 describe("runGeminiRetrieval", () => {
+  it("passes a requested seven-day Seattle outlook to the weather executor", async () => {
+    const { client } = fakeClient([
+      weatherArgumentsResponse("seattle", {
+        locations: ["Seattle, WA"],
+        hours: 24,
+        days: 7,
+        units: "metric",
+      }),
+      completedResponse("seattle-complete"),
+    ]);
+    const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
+
+    await runGeminiRetrieval({
+      gemini: client,
+      prompt: "Show me Seattle's seven-day outlook in Celsius.",
+      clientContext,
+      executeWeather,
+    });
+
+    expect(executeWeather).toHaveBeenCalledWith({
+      locations: ["Seattle, WA"],
+      hours: 24,
+      days: 7,
+      units: "metric",
+    });
+  });
+
+  it("passes four named comparison locations in one bounded weather request", async () => {
+    const locations = ["Raleigh, NC", "Seattle, WA", "Denver, CO", "Miami, FL"];
+    const { client } = fakeClient([
+      weatherArgumentsResponse("four-cities", { locations, days: 7 }),
+      completedResponse("four-cities-complete"),
+    ]);
+    const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
+
+    await runGeminiRetrieval({
+      gemini: client,
+      prompt: "Compare this week's weather in Raleigh, Seattle, Denver, and Miami.",
+      clientContext,
+      executeWeather,
+    });
+
+    expect(executeWeather).toHaveBeenCalledWith({
+      locations,
+      days: 7,
+      units: "imperial",
+    });
+  });
+
+  it("preserves the requested Denver 7 AM run window as semantic tool arguments", async () => {
+    const { client } = fakeClient([
+      weatherArgumentsResponse("denver-run", {
+        locations: ["Denver, CO"],
+        hours: 48,
+        days: 2,
+        units: "imperial",
+        activity: "run",
+        durationHours: 1,
+        targetLocalTime: "07:00",
+        targetDayOffset: 1,
+      }),
+      completedResponse("denver-run-complete"),
+    ]);
+    const executeWeather = vi.fn(() => Promise.resolve({ data: { ok: true } }));
+
+    await runGeminiRetrieval({
+      gemini: client,
+      prompt: "Is 7 AM tomorrow a good time for a one-hour run in Denver?",
+      clientContext,
+      executeWeather,
+    });
+
+    expect(executeWeather).toHaveBeenCalledWith({
+      locations: ["Denver, CO"],
+      hours: 48,
+      days: 2,
+      units: "imperial",
+      activity: "run",
+      durationHours: 1,
+      targetLocalTime: "07:00",
+      targetDayOffset: 1,
+    });
+  });
+
   it("replays every signed step unchanged before the matching function result", async () => {
     const first = functionCallResponse("weather_1", "signed-thought-1");
     const final = searchFixture as GeminiInteraction;
