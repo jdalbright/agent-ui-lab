@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createComponentImplementation } from "@a2ui/react/v0_9";
+import type { CSSProperties } from "react";
 import {
   DailyForecastNodeSchema,
   HourlyForecastNodeSchema,
@@ -89,11 +90,15 @@ export const HourlyForecast = createComponentImplementation(
     const range = Math.max(1, maximum - minimum);
     const points = temperatures
       .map((temperature, index) => {
-        const x = props.items.length === 1 ? 0 : (index / (props.items.length - 1)) * 100;
+        const x = index + 0.5;
         const y = 18 - ((temperature - minimum) / range) * 12;
         return `${x.toFixed(2)},${y.toFixed(2)}`;
       })
       .join(" ");
+    const trackStyle = {
+      "--a2ui-hour-count": props.items.length,
+      "--a2ui-hour-track-min": `${props.items.length * 78}px`,
+    } as CSSProperties;
     return (
       <section
         className={joinClassNames("a2ui-forecast", `a2ui-hourly-forecast--${variant}`)}
@@ -103,32 +108,41 @@ export const HourlyForecast = createComponentImplementation(
         <h3 id={labelId} className="a2ui-section-title">
           {props.label}
         </h3>
-        <ol className="a2ui-hourly" tabIndex={0} aria-label={`${props.label}, scroll for more`}>
-          {props.items.map((item, index) => (
-            <li key={`${item.time}-${index}`}>
-              <time>{item.time}</time>
-              <WeatherGlyph condition={item.condition} />
-              <strong>{temperatureLabel(item.temperature, props.unit)}</strong>
-              <span>{item.precipitationProbability}% rain</span>
-            </li>
-          ))}
-        </ol>
-        {variant === "chart" ? (
-          <svg
-            className="a2ui-hourly-chart"
-            viewBox="0 0 100 20"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <polyline points={points} />
-            {temperatures.map((temperature, index) => {
-              const x = temperatures.length === 1 ? 0 : (index / (temperatures.length - 1)) * 100;
-              const y = 18 - ((temperature - minimum) / range) * 12;
-              return <circle key={`${temperature}-${index}`} cx={x} cy={y} r="0.65" />;
-            })}
-          </svg>
-        ) : null}
+        <div
+          className="a2ui-hourly-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label={`${props.label}, scroll for more`}
+        >
+          <div className="a2ui-hourly-track" style={trackStyle}>
+            <ol className="a2ui-hourly" aria-labelledby={labelId}>
+              {props.items.map((item, index) => (
+                <li key={`${item.time}-${index}`}>
+                  <time>{item.time}</time>
+                  <WeatherGlyph condition={item.condition} />
+                  <strong>{temperatureLabel(item.temperature, props.unit)}</strong>
+                  <span>{item.precipitationProbability}% rain</span>
+                </li>
+              ))}
+            </ol>
+            {variant === "chart" ? (
+              <svg
+                className="a2ui-hourly-chart"
+                viewBox={`0 0 ${props.items.length} 20`}
+                preserveAspectRatio="none"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <polyline points={points} />
+                {temperatures.map((temperature, index) => {
+                  const x = index + 0.5;
+                  const y = 18 - ((temperature - minimum) / range) * 12;
+                  return <circle key={`${temperature}-${index}`} cx={x} cy={y} r="0.16" />;
+                })}
+              </svg>
+            ) : null}
+          </div>
+        </div>
       </section>
     );
   },

@@ -1,16 +1,19 @@
 import type { Interactions } from "@google/genai";
 import { describe, expect, it, vi } from "vitest";
 import searchFixture from "../_fixtures/gemini-search-grounding.json" with { type: "json" };
+import { LIMITS } from "../../shared/constants.js";
 import type { ClientContext, SourceRecord } from "../../shared/schemas.js";
 import {
   GeminiProviderError,
   GeminiToolRoundLimitError,
+  MAX_SEARCH_EVIDENCE_SPANS,
   type GeminiClient,
   type GeminiInteraction,
   normalizeGoogleSearchSources,
   runGeminiRetrieval,
   structuredOutputFromInteraction,
 } from "./gemini.js";
+import { buildResearchChangeManifest } from "./research-change-manifest.js";
 
 const clientContext: ClientContext = {
   sizeClass: "medium",
@@ -112,6 +115,52 @@ describe("structuredOutputFromInteraction", () => {
 });
 
 describe("runGeminiRetrieval", () => {
+  it("instructs affirmative change-summary retrieval to emit manifest-compatible cited sentences", async () => {
+    const { client, requests } = fakeClient([completedResponse("change-summary-instruction")]);
+
+    await runGeminiRetrieval({
+      gemini: client,
+      prompt: "What's new in Widget 2?",
+      clientContext,
+      executeWeather: vi.fn(),
+    });
+
+    const instruction = requests[0]?.system_instruction;
+    expect(instruction).toBeTypeOf("string");
+    expect(instruction).toMatch(
+      /only for an affirmative[^.]*what changed[^.]*what has changed[^.]*what's new[^.]*what is new[^.]*what's different[^.]*what is different[^.]*request/i,
+    );
+    expect(instruction).toMatch(
+      /for that conditional change-summary format[^.]*must use google_search[^.]*without source wording/i,
+    );
+    expect(instruction).toMatch(
+      /for that conditional change-summary format[^.]*no more than two cited sources[^.]*eight independent change predicates/i,
+    );
+    expect(instruction).toMatch(
+      /for that conditional change-summary format[^.]*exactly one independent change predicate per cited sentence/i,
+    );
+    expect(instruction).toMatch(
+      /for that conditional change-summary format[^.]*all cited change sentences together[^.]*at or below 500 characters/i,
+    );
+    expect(instruction).toMatch(
+      /for that conditional change-summary format[^.]*directly cite every full change sentence/i,
+    );
+    expect(instruction).toMatch(/exact requested subject exactly once/i);
+    expect(instruction).toMatch(/compared with <baseline>, <exact requested subject>/i);
+    expect(instruction).toMatch(/concrete affirmative present-tense change predicate/i);
+    expect(instruction).toMatch(/adds[^.]*removes[^.]*improves[^.]*supports[^.]*no longer/i);
+    expect(instruction).toMatch(
+      /no preamble, heading, background, question, uncertainty, pronoun[^.]*fragment[^.]*passive or subjectless continuation outside the listed subject-plus-predicate forms/i,
+    );
+    expect(instruction).toMatch(/no bullets or markdown/i);
+    expect(instruction).toMatch(
+      /for all other requests[^.]*do not apply these change-summary limits/i,
+    );
+    expect(instruction).toMatch(/use get_weather_bundle for current conditions/i);
+    expect(instruction).toMatch(/use google_search for current public-web facts/i);
+    expect(instruction).toMatch(/use both tools when the request needs both weather data/i);
+  });
+
   it("passes a requested seven-day Seattle outlook to the weather executor", async () => {
     const { client, requests } = fakeClient([
       weatherArgumentsResponse("seattle", {
@@ -449,6 +498,373 @@ describe("runGeminiRetrieval", () => {
     });
     expect(Object.isFrozen(result.sources)).toBe(true);
     expect(Object.isFrozen(result.sources[0])).toBe(true);
+  });
+
+  it("preserves distinct bounded citation spans when one URL is annotated more than once", async () => {
+    const text = "Gemini 4 is generally available. Gemini 4 removes the legacy endpoint.";
+    const firstEnd = text.indexOf(" Gemini 4 removes");
+    const { client } = fakeClient([
+      {
+        id: "search_duplicate_spans",
+        status: "completed",
+        output_text: text,
+        steps: [
+          {
+            type: "model_output",
+            content: [
+              {
+                type: "text",
+                text,
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url: "https://example.com/releases#status",
+                    title: "Release notes",
+                    start_index: 0,
+                    end_index: firstEnd,
+                  },
+                  {
+                    type: "url_citation",
+                    url: "https://example.com/releases#endpoint",
+                    title: "Release notes",
+                    start_index: firstEnd + 1,
+                    end_index: new TextEncoder().encode(text).length,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const result = await runGeminiRetrieval({
+      gemini: client,
+      prompt: "What changed in Gemini 4?",
+      clientContext,
+      executeWeather: vi.fn(),
+    });
+
+    expect(result.sources).toHaveLength(1);
+    expect(result.searchEvidence).toMatchObject({ status: "complete" });
+    expect(result.searchEvidence?.spans).toEqual([
+      {
+        sourceId: result.sources[0]?.id,
+        ordinal: 0,
+        text: "Gemini 4 is generally available.",
+      },
+      {
+        sourceId: result.sources[0]?.id,
+        ordinal: 1,
+        text: "Gemini 4 removes the legacy endpoint.",
+      },
+    ]);
+    expect(Object.isFrozen(result.searchEvidence)).toBe(true);
+    expect(Object.isFrozen(result.searchEvidence?.spans)).toBe(true);
+    expect(Object.isFrozen(result.searchEvidence?.spans[0])).toBe(true);
+  });
+
+  it("normalizes self-contained cited change sentences into a ready trusted manifest", async () => {
+    const firstSentence = "Widget 2 adds offline mode.";
+    const secondSentence =
+      "Compared with Widget 1, Widget 2 removes the legacy endpoint.";
+    const text = `${firstSentence} ${secondSentence}`;
+    const firstEnd = new TextEncoder().encode(firstSentence).length;
+    const { client } = fakeClient([
+      {
+        id: "search_manifest_compatible_changes",
+        status: "completed",
+        output_text: text,
+        steps: [
+          {
+            type: "model_output",
+            content: [
+              {
+                type: "text",
+                text,
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url: "https://example.com/widget-2-release#offline",
+                    title: "Widget 2 release notes",
+                    start_index: 0,
+                    end_index: firstEnd,
+                  },
+                  {
+                    type: "url_citation",
+                    url: "https://example.com/widget-2-release#legacy",
+                    title: "Widget 2 release notes",
+                    start_index: firstEnd + 1,
+                    end_index: new TextEncoder().encode(text).length,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const result = await runGeminiRetrieval({
+      gemini: client,
+      prompt: "What changed in Widget 2?",
+      clientContext,
+      executeWeather: vi.fn(),
+    });
+    const manifest = buildResearchChangeManifest({
+      prompt: "What changed in Widget 2?",
+      sources: result.sources,
+      searchEvidence: result.searchEvidence,
+    });
+
+    expect(result.searchEvidence).toMatchObject({ status: "complete" });
+    expect(result.searchEvidence?.spans.map((span) => span.text)).toEqual([
+      firstSentence,
+      secondSentence,
+    ]);
+    expect(manifest.status).toBe("ready");
+    if (manifest.status !== "ready") return;
+    expect(manifest.manifest.subject).toBe("Widget 2");
+    expect(manifest.manifest.entries.map((entry) => entry.coverageText)).toEqual([
+      "adds offline mode",
+      "removes the legacy endpoint",
+    ]);
+  });
+
+  it("preserves a partial citation verbatim and lets the trusted manifest fail closed", async () => {
+    const text = "Widget 2 adds offline mode.";
+    const citedText = "adds offline mode.";
+    const citedStart = new TextEncoder().encode("Widget 2 ").length;
+    const { client } = fakeClient([
+      {
+        id: "search_partial_change_sentence",
+        status: "completed",
+        output_text: text,
+        steps: [
+          {
+            type: "model_output",
+            content: [
+              {
+                type: "text",
+                text,
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url: "https://example.com/widget-2-release#offline",
+                    title: "Widget 2 release notes",
+                    start_index: citedStart,
+                    end_index: new TextEncoder().encode(text).length,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const result = await runGeminiRetrieval({
+      gemini: client,
+      prompt: "What changed in Widget 2?",
+      clientContext,
+      executeWeather: vi.fn(),
+    });
+    const manifest = buildResearchChangeManifest({
+      prompt: "What changed in Widget 2?",
+      sources: result.sources,
+      searchEvidence: result.searchEvidence,
+    });
+
+    expect(result.searchEvidence).toMatchObject({ status: "complete" });
+    expect(result.searchEvidence?.spans.map((span) => span.text)).toEqual([citedText]);
+    expect(manifest).toMatchObject({ status: "unavailable", reason: "unscoped-change" });
+  });
+
+  it("marks citation evidence incomplete when the bounded total annotation capacity is exceeded", async () => {
+    const clauses = Array.from(
+      { length: MAX_SEARCH_EVIDENCE_SPANS + 1 },
+      (_, index) => `Gemini 4 adds capability ${index}.`,
+    );
+    const text = clauses.join(" ");
+    let byteOffset = 0;
+    const annotations = clauses.map((clause, index) => {
+      const start_index = byteOffset;
+      const end_index = start_index + new TextEncoder().encode(clause).length;
+      byteOffset = end_index + 1;
+      return {
+        type: "url_citation" as const,
+        url: `https://example.com/releases#${index}`,
+        title: "Release notes",
+        start_index,
+        end_index,
+      };
+    });
+    const { client } = fakeClient([
+      {
+        id: "search_span_capacity",
+        status: "completed",
+        output_text: text,
+        steps: [{ type: "model_output", content: [{ type: "text", text, annotations }] }],
+      },
+    ]);
+
+    const result = await runGeminiRetrieval({
+      gemini: client,
+      prompt: "What changed in Gemini 4?",
+      clientContext,
+      executeWeather: vi.fn(),
+    });
+
+    expect(result.searchEvidence).toMatchObject({
+      status: "incomplete",
+      reason: "annotation-capacity",
+    });
+    expect(result.searchEvidence?.spans).toHaveLength(MAX_SEARCH_EVIDENCE_SPANS);
+  });
+
+  it.each([
+    {
+      name: "an oversized cited span",
+      reason: "oversize-span",
+      text: `Gemini 4 adds ${"x".repeat(610)} and removes the legacy endpoint.`,
+      annotation: (text: string) => ({
+        type: "url_citation" as const,
+        url: "https://example.com/releases",
+        start_index: 0,
+        end_index: new TextEncoder().encode(text).length,
+      }),
+    },
+    {
+      name: "a malformed cited byte range",
+      reason: "missing-span",
+      text: "Gemini 4 removes the legacy endpoint.",
+      annotation: (text: string) => ({
+        type: "url_citation" as const,
+        url: "https://example.com/releases",
+        start_index: 0,
+        end_index: new TextEncoder().encode(text).length + 10,
+      }),
+    },
+  ])("marks citation evidence incomplete for $name", async ({ reason, text, annotation }) => {
+    const { client } = fakeClient([
+      {
+        id: `search_${reason}`,
+        status: "completed",
+        output_text: text,
+        steps: [
+          {
+            type: "model_output",
+            content: [{ type: "text", text, annotations: [annotation(text)] }],
+          },
+        ],
+      },
+    ]);
+
+    const result = await runGeminiRetrieval({
+      gemini: client,
+      prompt: "What changed in Gemini 4?",
+      clientContext,
+      executeWeather: vi.fn(),
+    });
+
+    expect(result.searchEvidence).toMatchObject({ status: "incomplete", reason });
+    expect(result.searchEvidence?.spans).toHaveLength(0);
+  });
+
+  it("marks mixed valid and unsafe URL citations incomplete without issuing the unsafe source", async () => {
+    const text = "Gemini 4 is generally available.";
+    const range = {
+      start_index: 0,
+      end_index: new TextEncoder().encode(text).length,
+    };
+    const { client } = fakeClient([
+      {
+        id: "search_unsafe_mixed",
+        status: "completed",
+        output_text: text,
+        steps: [
+          {
+            type: "model_output",
+            content: [
+              {
+                type: "text",
+                text,
+                annotations: [
+                  { type: "url_citation", url: "https://example.com/releases", ...range },
+                  { type: "url_citation", url: "https://127.0.0.1/internal", ...range },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const result = await runGeminiRetrieval({
+      gemini: client,
+      prompt: "What changed in Gemini 4?",
+      clientContext,
+      executeWeather: vi.fn(),
+    });
+
+    expect(result.sources).toHaveLength(1);
+    expect(result.searchEvidence).toMatchObject({
+      status: "incomplete",
+      reason: "unsafe-citation",
+    });
+  });
+
+  it("marks search evidence incomplete when final source capacity excludes a cited search source", async () => {
+    const text = "Gemini 4 is generally available.";
+    const { client } = fakeClient([
+      functionCallResponse("weather_sources", "signed-weather-sources"),
+      {
+        id: "search_after_weather_sources",
+        status: "completed",
+        output_text: text,
+        steps: [
+          {
+            type: "model_output",
+            content: [
+              {
+                type: "text",
+                text,
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url: "https://example.com/releases",
+                    start_index: 0,
+                    end_index: new TextEncoder().encode(text).length,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    const weatherSources = Array.from({ length: LIMITS.sources }, (_, index) => ({
+      id: `src_weather${index}`,
+      title: `Weather source ${index}`,
+      url: `https://weather.example.com/${index}`,
+      provider: "google-weather" as const,
+      accessedAt: "2026-08-01T12:00:00.000Z",
+    }));
+
+    const result = await runGeminiRetrieval({
+      gemini: client,
+      prompt: "What changed in Gemini 4?",
+      clientContext,
+      executeWeather: vi.fn(() => Promise.resolve({ data: { ok: true }, sources: weatherSources })),
+    });
+
+    expect(result.sources).toHaveLength(LIMITS.sources);
+    expect(result.sources.every((source) => source.provider === "google-weather")).toBe(true);
+    expect(result.searchEvidence).toMatchObject({
+      status: "incomplete",
+      reason: "source-capacity",
+      spans: [],
+    });
   });
 
   it("drops unsafe HTTPS citations before SourceRecord construction", () => {

@@ -1,3 +1,8 @@
+import {
+  SURFACE_CONTENT_BUDGETS,
+  type SurfaceContentBudget,
+} from "../../shared/surface-content-budget.js";
+
 export const UI_RECIPE_IDS = [
   "weather.snapshot",
   "weather.decision",
@@ -14,16 +19,37 @@ export type UiRecipeId = (typeof UI_RECIPE_IDS)[number];
 export type UiDensity = "brief" | "balanced" | "detailed";
 export type UiEmphasis = "answer" | "decision" | "trend" | "evidence" | "risk";
 
+export interface UiSemanticAtomAlternative {
+  readonly allOf: readonly [string, ...string[]];
+}
+
+export type UiRequiredFactMatcher =
+  | {
+      readonly kind: "recommended-comparison-item";
+      readonly labelAnyOf: readonly [string, ...string[]];
+      readonly detailAnyOf: readonly [string, ...string[]];
+    }
+  | {
+      readonly kind: "semantic-atoms";
+      readonly subjectAnyOf?: readonly [string, ...string[]];
+      readonly excludedSubjectAnyOf?: readonly [string, ...string[]];
+      readonly discourseTargetAnyOf?: readonly [string, ...string[]];
+      readonly requiresCurrentAssertion?: boolean;
+      readonly anyOf: readonly [UiSemanticAtomAlternative, ...UiSemanticAtomAlternative[]];
+    };
+
 export interface UiRequiredFact {
   readonly concept: string;
   readonly anyOf: readonly [string, ...string[]];
+  readonly matcher?: UiRequiredFactMatcher;
 }
 
-export interface UiContentBudget {
-  readonly maxComponents: number;
-  readonly maxProseCharacters: number;
-  readonly maxLeadCharacters: number;
+export interface UiSemanticVariantExpectation {
+  readonly component: string;
+  readonly allowed: readonly [string, ...string[]];
 }
+
+export type UiContentBudget = SurfaceContentBudget;
 
 export interface UiQualityCase {
   readonly id: string;
@@ -36,32 +62,47 @@ export interface UiQualityCase {
     readonly emphasis: UiEmphasis;
     readonly requiredComponents: readonly string[];
     readonly orderedComponents: readonly string[];
+    readonly semanticVariants: readonly UiSemanticVariantExpectation[];
     readonly requiredFacts: readonly UiRequiredFact[];
     readonly requiredSourceIds: readonly string[];
     readonly contentBudget: UiContentBudget;
   };
 }
 
-export const UI_CONTENT_BUDGETS = {
-  brief: {
-    maxComponents: 6,
-    maxProseCharacters: 700,
-    maxLeadCharacters: 280,
-  },
-  balanced: {
-    maxComponents: 9,
-    maxProseCharacters: 1_400,
-    maxLeadCharacters: 480,
-  },
-  detailed: {
-    maxComponents: 12,
-    maxProseCharacters: 2_200,
-    maxLeadCharacters: 700,
-  },
-} as const satisfies Record<UiDensity, UiContentBudget>;
+export const UI_CONTENT_BUDGETS = SURFACE_CONTENT_BUDGETS;
+
+const QR01_TARGET_SUBJECTS = [
+  "Gemini 3.6 Flash",
+  "Gemini 3.6",
+  "3.6 Flash",
+  "the model",
+  "this model",
+  "the release",
+  "this release",
+] as const;
+
+const QR01_DISCOURSE_TARGETS = [
+  "Gemini 3.6 Flash",
+  "Gemini 3.6",
+  "3.6 Flash",
+] as const;
+
+const QR01_EXCLUDED_SUBJECTS = [
+  "Gemini 3.5 Flash",
+  "Gemini 3.5",
+  "3.5 Flash",
+] as const;
 
 function fact(concept: string, ...anyOf: [string, ...string[]]): UiRequiredFact {
   return { concept, anyOf };
+}
+
+function matchedFact(
+  concept: string,
+  anyOf: [string, ...string[]],
+  matcher: UiRequiredFactMatcher,
+): UiRequiredFact {
+  return { concept, anyOf, matcher };
 }
 
 function qualityCase(input: {
@@ -72,6 +113,7 @@ function qualityCase(input: {
   density: UiDensity;
   emphasis: UiEmphasis;
   requiredComponents: readonly string[];
+  semanticVariants: readonly UiSemanticVariantExpectation[];
   requiredFacts: readonly UiRequiredFact[];
   requiredSourceIds: readonly string[];
 }): UiQualityCase {
@@ -86,6 +128,7 @@ function qualityCase(input: {
       emphasis: input.emphasis,
       requiredComponents: input.requiredComponents,
       orderedComponents: input.requiredComponents,
+      semanticVariants: input.semanticVariants,
       requiredFacts: input.requiredFacts,
       requiredSourceIds: input.requiredSourceIds,
       contentBudget: UI_CONTENT_BUDGETS[input.density],
@@ -102,6 +145,7 @@ export const UI_QUALITY_CASES = [
     density: "brief",
     emphasis: "answer",
     requiredComponents: ["WeatherHero", "SourceList"],
+    semanticVariants: [{ component: "WeatherHero", allowed: ["snapshot"] }],
     requiredFacts: [
       fact("location", "Raleigh", "Raleigh, North Carolina"),
       fact("current temperature", "81°F", "81 F", "81 degrees"),
@@ -117,6 +161,7 @@ export const UI_QUALITY_CASES = [
     density: "brief",
     emphasis: "risk",
     requiredComponents: ["WeatherHero", "WeatherAlert", "SourceList"],
+    semanticVariants: [{ component: "WeatherHero", allowed: ["snapshot"] }],
     requiredFacts: [
       fact("location", "New Orleans"),
       fact("alert title", "Severe Thunderstorm Warning"),
@@ -132,6 +177,10 @@ export const UI_QUALITY_CASES = [
     density: "balanced",
     emphasis: "decision",
     requiredComponents: ["WeatherHero", "RecommendationBand", "HourlyForecast", "SourceList"],
+    semanticVariants: [
+      { component: "WeatherHero", allowed: ["decision"] },
+      { component: "HourlyForecast", allowed: ["strip"] },
+    ],
     requiredFacts: [
       fact("location", "Raleigh"),
       fact("recommended start", "7:00 PM", "7 PM"),
@@ -147,6 +196,10 @@ export const UI_QUALITY_CASES = [
     density: "balanced",
     emphasis: "decision",
     requiredComponents: ["WeatherHero", "RecommendationBand", "HourlyForecast", "SourceList"],
+    semanticVariants: [
+      { component: "WeatherHero", allowed: ["decision"] },
+      { component: "HourlyForecast", allowed: ["strip", "chart"] },
+    ],
     requiredFacts: [
       fact("location", "Denver"),
       fact("requested time", "7:00 AM", "7 AM"),
@@ -163,6 +216,10 @@ export const UI_QUALITY_CASES = [
     density: "balanced",
     emphasis: "trend",
     requiredComponents: ["WeatherHero", "DailyForecast", "SourceList"],
+    semanticVariants: [
+      { component: "WeatherHero", allowed: ["snapshot"] },
+      { component: "DailyForecast", allowed: ["cards"] },
+    ],
     requiredFacts: [
       fact("location", "Seattle"),
       fact("seven-day range", "7-day", "seven-day", "7 days"),
@@ -178,6 +235,10 @@ export const UI_QUALITY_CASES = [
     density: "detailed",
     emphasis: "trend",
     requiredComponents: ["WeatherHero", "DailyForecast", "RecommendationBand", "SourceList"],
+    semanticVariants: [
+      { component: "WeatherHero", allowed: ["snapshot"] },
+      { component: "DailyForecast", allowed: ["table", "cards"] },
+    ],
     requiredFacts: [
       fact("location", "Tokyo"),
       fact("five-day range", "5-day", "five-day", "5 days"),
@@ -194,6 +255,7 @@ export const UI_QUALITY_CASES = [
     density: "brief",
     emphasis: "decision",
     requiredComponents: ["ComparisonSummary", "ComparisonTable", "SourceList"],
+    semanticVariants: [{ component: "ComparisonSummary", allowed: ["verdict"] }],
     requiredFacts: [
       fact("first option", "Raleigh"),
       fact("second option", "Asheville"),
@@ -210,11 +272,37 @@ export const UI_QUALITY_CASES = [
     density: "balanced",
     emphasis: "decision",
     requiredComponents: ["ComparisonSummary", "ComparisonTable", "SourceList"],
+    semanticVariants: [{ component: "ComparisonSummary", allowed: ["verdict"] }],
     requiredFacts: [
       fact("first option", "Southwest"),
       fact("second option", "Delta"),
       fact("criterion", "carry-on", "carry on"),
-      fact("decision", "more generous", "better allowance"),
+      fact("Southwest carry-on limit", "24 × 16 × 10", "24 x 16 x 10", "24 by 16 by 10"),
+      fact("Delta carry-on limit", "22 × 14 × 9", "22 x 14 x 9", "22 by 14 by 9"),
+      matchedFact(
+        "decision",
+        [
+          "Southwest is more generous",
+          "Southwest is the more generous",
+          "Southwest has the better allowance",
+          "Southwest offers a better allowance",
+          "Southwest has a larger allowance",
+          "Southwest offers a larger allowance",
+          "Southwest has the larger carry-on",
+          "Southwest allows a larger carry-on",
+          "Southwest permits a larger carry-on",
+          "Southwest permits the larger carry-on",
+          "Southwest's carry-on limit is larger",
+          "Southwest has larger carry-on dimensions",
+          "Southwest offers more carry-on space",
+          "Southwest more generous",
+        ],
+        {
+          kind: "recommended-comparison-item",
+          labelAnyOf: ["Southwest", "Southwest Airlines"],
+          detailAnyOf: ["24 × 16 × 10", "24 x 16 x 10", "24 by 16 by 10"],
+        },
+      ),
     ],
     requiredSourceIds: ["src_search01", "src_search02"],
   }),
@@ -226,6 +314,7 @@ export const UI_QUALITY_CASES = [
     density: "balanced",
     emphasis: "answer",
     requiredComponents: ["ComparisonSummary", "ComparisonTable", "SourceList"],
+    semanticVariants: [{ component: "ComparisonSummary", allowed: ["balanced"] }],
     requiredFacts: [
       fact("Raleigh option", "Raleigh"),
       fact("Durham option", "Durham"),
@@ -238,11 +327,13 @@ export const UI_QUALITY_CASES = [
   qualityCase({
     id: "QC04",
     recipeId: "comparison.scorecard",
-    prompt: "Compare React and Angular support in A2UI 0.9.1 using official sources.",
+    prompt:
+      "Score React and Angular in A2UI 0.9.1 on renderer and support. Use official sources.",
     fixture: "quality-compare-a2ui-renderer-scorecard",
     density: "detailed",
     emphasis: "evidence",
     requiredComponents: ["ComparisonSummary", "ComparisonTable", "SourceList"],
+    semanticVariants: [{ component: "ComparisonSummary", allowed: ["balanced"] }],
     requiredFacts: [
       fact("first option", "React"),
       fact("second option", "Angular"),
@@ -259,6 +350,10 @@ export const UI_QUALITY_CASES = [
     density: "detailed",
     emphasis: "trend",
     requiredComponents: ["ComparisonSummary", "ComparisonChart", "ComparisonTable", "SourceList"],
+    semanticVariants: [
+      { component: "ComparisonSummary", allowed: ["balanced"] },
+      { component: "ComparisonChart", allowed: ["line", "bar"] },
+    ],
     requiredFacts: [
       fact("first location", "Raleigh"),
       fact("second location", "Charlotte"),
@@ -277,6 +372,10 @@ export const UI_QUALITY_CASES = [
     density: "detailed",
     emphasis: "trend",
     requiredComponents: ["ComparisonSummary", "ComparisonChart", "ComparisonTable", "SourceList"],
+    semanticVariants: [
+      { component: "ComparisonSummary", allowed: ["balanced"] },
+      { component: "ComparisonChart", allowed: ["line", "bar"] },
+    ],
     requiredFacts: [
       fact("Miami series", "Miami"),
       fact("Denver series", "Denver"),
@@ -294,9 +393,107 @@ export const UI_QUALITY_CASES = [
     density: "brief",
     emphasis: "answer",
     requiredComponents: ["ResearchLead", "EvidenceList", "SourceList"],
+    semanticVariants: [
+      { component: "ResearchLead", allowed: ["brief"] },
+      { component: "EvidenceList", allowed: ["stack"] },
+    ],
     requiredFacts: [
       fact("model", "Gemini 3.6 Flash"),
-      fact("change", "change", "new"),
+      matchedFact(
+        "release status",
+        [
+          "generally available",
+          "has reached general availability",
+          "GA",
+          "production-ready release",
+          "ready for production use",
+          "available for production use",
+          "production ready",
+          "stable release",
+        ],
+        {
+          kind: "semantic-atoms",
+          subjectAnyOf: QR01_TARGET_SUBJECTS,
+          excludedSubjectAnyOf: QR01_EXCLUDED_SUBJECTS,
+          discourseTargetAnyOf: QR01_DISCOURSE_TARGETS,
+          requiresCurrentAssertion: true,
+          anyOf: [
+            { allOf: ["generally available"] },
+            { allOf: ["has reached general availability"] },
+            { allOf: ["GA"] },
+            { allOf: ["production-ready release"] },
+            { allOf: ["release is production-ready"] },
+            { allOf: ["model is production-ready"] },
+            { allOf: ["is production-ready"] },
+            { allOf: ["ready for production use"] },
+            { allOf: ["is available for production use"] },
+            { allOf: ["is production ready"] },
+            { allOf: ["stable release"] },
+            { allOf: ["release is stable"] },
+            { allOf: ["model is stable"] },
+            { allOf: ["is stable"] },
+            { allOf: ["remains stable"] },
+            { allOf: ["stable for production use"] },
+          ],
+        },
+      ),
+      matchedFact(
+        "agentic efficiency",
+        ["fewer reasoning steps", "fewer turns", "fewer tool calls"],
+        {
+          kind: "semantic-atoms",
+          subjectAnyOf: QR01_TARGET_SUBJECTS,
+          excludedSubjectAnyOf: QR01_EXCLUDED_SUBJECTS,
+          discourseTargetAnyOf: QR01_DISCOURSE_TARGETS,
+          requiresCurrentAssertion: true,
+          anyOf: [
+            { allOf: ["fewer reasoning steps"] },
+            { allOf: ["fewer turns"] },
+            { allOf: ["fewer tool calls"] },
+            { allOf: ["less deliberation"] },
+            { allOf: ["fewer interactions"] },
+            { allOf: ["agentic workflows more efficient"] },
+            { allOf: ["more efficient agentic workflows"] },
+            { allOf: ["less reasoning", "fewer tool invocations"] },
+            { allOf: ["reduces reasoning overhead", "agentic workflows"] },
+            { allOf: ["agentic tasks", "less reasoning overhead"] },
+            { allOf: ["agent workflows", "fewer steps", "calls"] },
+            { allOf: ["cuts tool use", "agent workflows"] },
+            { allOf: ["reduces reasoning steps and tool calls"] },
+          ],
+        },
+      ),
+      matchedFact(
+        "code improvement",
+        ["improved code generation", "higher quality production-ready code", "fewer debugging loops"],
+        {
+          kind: "semantic-atoms",
+          subjectAnyOf: QR01_TARGET_SUBJECTS,
+          excludedSubjectAnyOf: QR01_EXCLUDED_SUBJECTS,
+          discourseTargetAnyOf: QR01_DISCOURSE_TARGETS,
+          requiresCurrentAssertion: true,
+          anyOf: [
+            { allOf: ["improved code generation"] },
+            { allOf: ["improves code generation"] },
+            { allOf: ["higher quality production-ready code"] },
+            { allOf: ["higher-quality production-ready code"] },
+            { allOf: ["fewer debugging loops"] },
+            { allOf: ["stronger deployable code"] },
+            { allOf: ["higher-quality production code"] },
+            { allOf: ["higher quality production code"] },
+            { allOf: ["improves code quality"] },
+            { allOf: ["improved code quality"] },
+            { allOf: ["generated code", "fewer debugging iterations"] },
+            { allOf: ["better production code", "less debugging"] },
+            { allOf: ["code generation", "more reliable", "fewer fixes"] },
+            { allOf: ["generates better production-ready code"] },
+            { allOf: ["higher-quality deployable code"] },
+            { allOf: ["higher quality generated code"] },
+            { allOf: ["reduces debugging cycles"] },
+            { allOf: ["reduces debugging iterations"] },
+          ],
+        },
+      ),
     ],
     requiredSourceIds: ["src_search01", "src_search02"],
   }),
@@ -308,6 +505,10 @@ export const UI_QUALITY_CASES = [
     density: "balanced",
     emphasis: "evidence",
     requiredComponents: ["ResearchLead", "EvidenceList", "SourceList"],
+    semanticVariants: [
+      { component: "ResearchLead", allowed: ["feature", "brief"] },
+      { component: "EvidenceList", allowed: ["grid", "stack"] },
+    ],
     requiredFacts: [
       fact("authority", "FCC", "Federal Communications Commission"),
       fact("subject", "broadband label", "Broadband Facts"),
@@ -323,6 +524,7 @@ export const UI_QUALITY_CASES = [
     density: "detailed",
     emphasis: "trend",
     requiredComponents: ["ResearchLead", "Timeline", "SourceList"],
+    semanticVariants: [{ component: "ResearchLead", allowed: ["feature"] }],
     requiredFacts: [
       fact("program", "Artemis II"),
       fact("range start", "2024"),
@@ -338,6 +540,7 @@ export const UI_QUALITY_CASES = [
     density: "balanced",
     emphasis: "trend",
     requiredComponents: ["ResearchLead", "Timeline", "SourceList"],
+    semanticVariants: [{ component: "ResearchLead", allowed: ["brief", "feature"] }],
     requiredFacts: [
       fact("earlier version", "0.9.1", "v0.9.1"),
       fact("later version", "1.0", "v1.0"),
@@ -353,6 +556,10 @@ export const UI_QUALITY_CASES = [
     density: "detailed",
     emphasis: "evidence",
     requiredComponents: ["ResearchLead", "EvidenceList", "SourceList"],
+    semanticVariants: [
+      { component: "ResearchLead", allowed: ["feature"] },
+      { component: "EvidenceList", allowed: ["for-against"] },
+    ],
     requiredFacts: [
       fact("subject", "Pluto"),
       fact("authority", "IAU", "International Astronomical Union"),
@@ -369,10 +576,54 @@ export const UI_QUALITY_CASES = [
     density: "balanced",
     emphasis: "evidence",
     requiredComponents: ["ResearchLead", "EvidenceList", "SourceList"],
+    semanticVariants: [
+      { component: "ResearchLead", allowed: ["brief", "feature"] },
+      { component: "EvidenceList", allowed: ["for-against", "stack"] },
+    ],
     requiredFacts: [
       fact("new version", "1.0", "v1.0"),
       fact("earlier version", "0.9.1", "v0.9.1"),
-      fact("stability claim", "stable", "candidate", "preview"),
+      matchedFact(
+        "v1.0 status",
+        [
+          "v1.0 is still a candidate",
+          "v1.0 remains a candidate",
+          "v1.0 is a release candidate",
+          "1.0 remains a release candidate",
+        ],
+        {
+          kind: "semantic-atoms",
+          anyOf: [
+            { allOf: ["v1.0", "release", "candidate"] },
+            { allOf: ["1.0", "release", "candidate"] },
+            { allOf: ["v1.0", "pre-release"] },
+            { allOf: ["1.0", "pre-release"] },
+            { allOf: ["v1.0", "pre release"] },
+            { allOf: ["1.0", "pre release"] },
+          ],
+        },
+      ),
+      matchedFact(
+        "v0.9.1 status",
+        [
+          "v0.9.1 remains current",
+          "v0.9.1 is current",
+          "current production release",
+          "0.9.1 is the current stable release",
+        ],
+        {
+          kind: "semantic-atoms",
+          anyOf: [
+            { allOf: ["v0.9.1", "current", "release"] },
+            { allOf: ["0.9.1", "current", "release"] },
+            { allOf: ["v0.9.1", "production", "release"] },
+            { allOf: ["0.9.1", "production", "release"] },
+            { allOf: ["v0.9.1", "stable", "release"] },
+            { allOf: ["0.9.1", "stable", "release"] },
+          ],
+        },
+      ),
+      fact("challenging evidence", "challenge"),
     ],
     requiredSourceIds: ["src_search01", "src_search02"],
   }),

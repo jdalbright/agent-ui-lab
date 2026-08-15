@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { A2uiSurface } from "@a2ui/react/v0_9";
 import {
   MessageProcessor,
@@ -89,6 +90,86 @@ const representativeCases: RepresentativeCase[] = [
     name: "Divider",
     root: { id: "root", component: "Divider", label: "Next section" },
     visibleText: /Next section/i,
+  },
+  {
+    name: "Stack",
+    root: {
+      id: "root",
+      component: "Stack",
+      children: ["child-a"],
+      gap: "regular",
+      align: "stretch",
+    },
+    children: [{ id: "child-a", component: "TextBlock", text: "Stack child content" }],
+    visibleText: /Stack child content/i,
+  },
+  {
+    name: "Grid",
+    root: {
+      id: "root",
+      component: "Grid",
+      children: ["child-a", "child-b"],
+      columns: "adaptive",
+      gap: "regular",
+    },
+    children: [
+      { id: "child-a", component: "TextBlock", text: "Grid first item" },
+      { id: "child-b", component: "TextBlock", text: "Grid second item" },
+    ],
+    visibleText: /Grid first item/i,
+  },
+  {
+    name: "Section",
+    root: {
+      id: "root",
+      component: "Section",
+      children: ["child-a"],
+      label: "Supporting context",
+      role: "supporting",
+      tone: "neutral",
+      prominence: "standard",
+    },
+    children: [{ id: "child-a", component: "TextBlock", text: "Section content" }],
+    visibleText: /Section content/i,
+  },
+  {
+    name: "Card",
+    root: {
+      id: "root",
+      component: "Card",
+      children: ["child-a"],
+      tone: "accent",
+      prominence: "lead",
+    },
+    children: [{ id: "child-a", component: "TextBlock", text: "Card content" }],
+    visibleText: /Card content/i,
+  },
+  {
+    name: "Tabs",
+    root: {
+      id: "root",
+      component: "Tabs",
+      children: ["child-a", "child-b"],
+      labels: ["Overview", "Details"],
+      defaultIndex: 0,
+    },
+    children: [
+      { id: "child-a", component: "TextBlock", text: "Overview panel" },
+      { id: "child-b", component: "TextBlock", text: "Details panel" },
+    ],
+    visibleText: /Overview panel/i,
+  },
+  {
+    name: "Disclosure",
+    root: {
+      id: "root",
+      component: "Disclosure",
+      children: ["child-a"],
+      label: "More detail",
+      defaultOpen: true,
+    },
+    children: [{ id: "child-a", component: "TextBlock", text: "Disclosure content" }],
+    visibleText: /Disclosure content/i,
   },
   {
     name: "WeatherHero",
@@ -304,6 +385,49 @@ describe("trustedCatalog", () => {
     },
   );
 
+  it("supports keyboard and pointer navigation for trusted local tabs", async () => {
+    const user = userEvent.setup();
+    const tabsCase = representativeCases.find(({ name }) => name === "Tabs");
+    if (!tabsCase) throw new Error("Tabs fixture is missing.");
+    renderRepresentativeSurface(tabsCase.root, tabsCase.children);
+
+    const overview = screen.getByRole("tab", { name: "Overview" });
+    const details = screen.getByRole("tab", { name: "Details" });
+    expect(overview).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Overview panel")).toBeVisible();
+
+    await user.click(details);
+    expect(details).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Details panel")).toBeVisible();
+
+    await user.keyboard("{ArrowLeft}");
+    expect(overview).toHaveAttribute("aria-selected", "true");
+    expect(overview).toHaveFocus();
+
+    await user.keyboard("{End}");
+    expect(details).toHaveAttribute("aria-selected", "true");
+    expect(details).toHaveFocus();
+
+    await user.keyboard("{Home}");
+    expect(overview).toHaveAttribute("aria-selected", "true");
+    expect(overview).toHaveFocus();
+  });
+
+  it("uses a named native disclosure for bounded supporting content", async () => {
+    const user = userEvent.setup();
+    const disclosureCase = representativeCases.find(({ name }) => name === "Disclosure");
+    if (!disclosureCase) throw new Error("Disclosure fixture is missing.");
+    renderRepresentativeSurface(disclosureCase.root, disclosureCase.children);
+
+    const disclosure = screen.getByRole("group");
+    const toggle = screen.getByText("More detail");
+    expect(disclosure).toHaveAttribute("open");
+    expect(screen.getByText("Disclosure content")).toBeVisible();
+
+    await user.click(toggle);
+    expect(disclosure).not.toHaveAttribute("open");
+  });
+
   it("gives ComparisonChart an accessible graphic and a visible tabular equivalent", () => {
     const chartCase = representativeCases.find(({ name }) => name === "ComparisonChart");
     if (!chartCase) throw new Error("ComparisonChart fixture is missing.");
@@ -317,6 +441,87 @@ describe("trustedCatalog", () => {
     expect(within(table).getByRole("rowheader", { name: "North" })).toBeVisible();
     expect(within(table).getByText("12")).toBeVisible();
     expect(within(table).getByText("18")).toBeVisible();
+  });
+
+  it("uses a level-two heading for the primary comparison title", () => {
+    const summaryCase = representativeCases.find(({ name }) => name === "ComparisonSummary");
+    if (!summaryCase) throw new Error("ComparisonSummary fixture is missing.");
+    renderRepresentativeSurface(summaryCase.root);
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: /Route comparison/i }),
+    ).toBeVisible();
+  });
+
+  it.each([2, 24])(
+    "keeps all %i hourly cards and chart points in one bounded scroll coordinate system",
+    (itemCount) => {
+      const items = Array.from({ length: itemCount }, (_, index) => ({
+        time: `${index + 1}:00`,
+        temperature: 60 + index,
+        precipitationProbability: index,
+        condition: "clear" as const,
+      }));
+
+      const { container } = renderRepresentativeSurface({
+        id: "root",
+        component: "HourlyForecast",
+        label: "Full hourly outlook",
+        unit: "F",
+        items,
+        variant: "chart",
+      });
+
+      const scrollRegion = screen.getByRole("region", {
+        name: /Full hourly outlook, scroll for more/i,
+      });
+      const track = scrollRegion.querySelector<HTMLElement>(".a2ui-hourly-track");
+      const list = within(scrollRegion).getByRole("list");
+      const chart = scrollRegion.querySelector<SVGElement>(".a2ui-hourly-chart");
+      const points = chart?.querySelector("polyline")?.getAttribute("points")?.split(" ") ?? [];
+
+      expect(track).not.toBeNull();
+      expect(track?.style.getPropertyValue("--a2ui-hour-count")).toBe(String(itemCount));
+      expect(track?.style.getPropertyValue("--a2ui-hour-track-min")).toBe(
+        `${itemCount * 78}px`,
+      );
+      expect(list.children).toHaveLength(itemCount);
+      expect(chart).not.toBeNull();
+      expect(chart).toHaveAttribute("viewBox", `0 0 ${itemCount} 20`);
+      expect(points).toHaveLength(itemCount);
+      expect(points[0]?.split(",")[0]).toBe("0.50");
+      expect(points.at(-1)?.split(",")[0]).toBe(`${(itemCount - 0.5).toFixed(2)}`);
+      expect(container.querySelectorAll(".a2ui-hourly-scroll")).toHaveLength(1);
+    },
+  );
+
+  it("anchors positive bars to a visible zero baseline", () => {
+    const { container } = renderRepresentativeSurface({
+      id: "root",
+      component: "ComparisonChart",
+      title: "Positive score comparison",
+      labels: ["Option A", "Option B"],
+      series: [{ label: "Score", values: [12, 18] }],
+      unit: "points",
+      variant: "bar",
+    });
+
+    const chart = screen.getByRole("img", { name: /Positive score comparison/i });
+    const baseline = container.querySelector<SVGLineElement>(".a2ui-chart__baseline");
+    const bars = [...container.querySelectorAll<SVGRectElement>(".a2ui-chart__bar")];
+    const baselineY = Number(baseline?.getAttribute("y1"));
+
+    expect(chart).toHaveAttribute("data-domain-min", "0");
+    expect(baseline).toHaveAttribute("data-value", "0");
+    expect(container.querySelector(".a2ui-chart__tick--zero")).toHaveTextContent("0");
+    expect(bars).toHaveLength(2);
+    for (const bar of bars) {
+      expect(Number(bar.getAttribute("height"))).toBeGreaterThan(0);
+      expect(Number(bar.getAttribute("y")) + Number(bar.getAttribute("height"))).toBeCloseTo(
+        baselineY,
+        4,
+      );
+    }
   });
 
   it("renders SourceList from validated source records without accepting mutable agent-authored links", () => {

@@ -209,4 +209,64 @@ describe("compileSurfaceSpec", () => {
 
     expect(() => compileSurfaceSpec("surface-research", spec, invalidSources)).toThrow();
   });
+
+  it("rejects comparison table rows that do not match the column count", () => {
+    const spec = {
+      kind: "comparison",
+      rootId: "table",
+      components: [
+        {
+          id: "table",
+          component: "ComparisonTable",
+          caption: "Quarterly comparison",
+          columns: ["Option", "Q1", "Q2"],
+          rows: [["Alpha", "12"]],
+        },
+      ],
+    };
+
+    const result = SurfaceSpecSchema.safeParse(spec);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the malformed table to fail schema validation.");
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["components", 0, "rows", 0],
+        message: "Comparison table rows must match the column count.",
+      }),
+    );
+    expect(() => compileSurfaceSpec("surface-table", spec, [])).toThrow(
+      /Comparison table rows must match the column count\./,
+    );
+  });
+
+  it("rejects comparison chart series that do not match the label count", () => {
+    const spec = {
+      kind: "comparison",
+      rootId: "chart",
+      components: [
+        {
+          id: "chart",
+          component: "ComparisonChart",
+          title: "Quarterly comparison",
+          labels: ["Q1", "Q2"],
+          series: [{ label: "Alpha", values: [12, 18, 999] }],
+        },
+      ],
+    };
+
+    const result = SurfaceSpecSchema.safeParse(spec);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the malformed chart to fail schema validation.");
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["components", 0, "series", 0, "values"],
+        message: "Comparison chart series values must match the label count.",
+      }),
+    );
+    expect(() => compileSurfaceSpec("surface-chart", spec, [])).toThrow(
+      /Comparison chart series values must match the label count\./,
+    );
+  });
 });

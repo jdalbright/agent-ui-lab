@@ -1,5 +1,6 @@
 import { classifyCapability, type CapabilityDecision } from "./capability.js";
 import { createCapabilityBoundarySpec, createClarificationSpec } from "./capability-surfaces.js";
+import { parseStrictFormattedNumber } from "./strict-numeric.js";
 import type {
   SourceRecord,
   SurfaceRecipeId,
@@ -897,7 +898,7 @@ function readableRecordedNodes(spec: SurfaceSpec): SurfaceSpec["components"][num
 
 function recordedRecipeFits(spec: SurfaceSpec): boolean {
   const root = spec.components.find((node) => node.id === spec.rootId);
-  if (root?.component !== "SurfaceFrame") return false;
+  if (root?.component !== "SurfaceFrame" || !root.recipeId) return false;
   const expectation = RECORDED_RECIPE_EXPECTATIONS[root.recipeId];
   const componentNames: ReadonlySet<string> = new Set(
     spec.components.map((node) => node.component),
@@ -922,8 +923,7 @@ function recordedChartTableAlign(spec: SurfaceSpec): boolean {
     if (!row || row[0] !== series.label || row.length !== series.values.length + 1) return false;
     return series.values.every((value, valueIndex) => {
       const cell = row[valueIndex + 1];
-      const numericCell = Number.parseFloat(cell?.replace(/[^0-9+-.]/g, "") ?? "");
-      return Number.isFinite(numericCell) && numericCell === value;
+      return parseStrictFormattedNumber(cell) === value;
     });
   });
 }

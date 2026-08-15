@@ -1,18 +1,35 @@
 import { describe, expect, it } from "vitest";
 import type { ClientContext, SurfaceSpec } from "@shared/schemas.js";
+import type {
+  SurfacePlanFirstFailureCategory,
+  SurfacePlanFirstFailureCode,
+  SurfacePlanSchemaIssueDiagnostic,
+} from "../../api/_lib/composition.js";
 import { createGeminiProvider, type GeminiRetrievalResult } from "../../api/_lib/gemini.js";
 import type { SurfacePlan } from "../../api/_lib/surface-plan.js";
 import { UI_QUALITY_CASES } from "./ui-quality-cases.js";
 import { recordedUiQualityCompilationInput } from "./ui-quality-fixtures.js";
-import { runLiveUiQualityEvaluation } from "./ui-quality-live-runner.js";
+import {
+  liveUiQualityDiagnostics,
+  runLiveUiQualityEvaluation,
+  selectLiveUiQualityCases,
+} from "./ui-quality-live-runner.js";
 
+const LIVE_REQUESTED = process.env.RUN_LIVE_UI_EVALS === "true";
 const LIVE_ENABLED =
-  process.env.RUN_LIVE_UI_EVALS === "true" &&
+  LIVE_REQUESTED &&
   typeof process.env.GEMINI_API_KEY === "string" &&
   process.env.GEMINI_API_KEY.length > 0;
+const FOCUSED_CASES_REQUESTED = LIVE_REQUESTED && Boolean(process.env.LIVE_UI_CASE_IDS?.trim());
+const LIVE_CASES = LIVE_REQUESTED
+  ? selectLiveUiQualityCases(process.env.LIVE_UI_CASE_IDS)
+  : UI_QUALITY_CASES;
 
-describe.skipIf(!LIVE_ENABLED)("opt-in live UI composition evaluation", () => {
+describe.skipIf(!LIVE_REQUESTED)("opt-in live UI composition evaluation", () => {
   it("meets the supported-case validity and fallback thresholds", async () => {
+    if (!LIVE_ENABLED) {
+      throw new TypeError("GEMINI_API_KEY is required when RUN_LIVE_UI_EVALS=true.");
+    }
     const compositionModule = await import("../../api/_lib/composition.js") as unknown as {
       composeSurfacePlan?: (input: {
         gemini: ReturnType<typeof createGeminiProvider>;
@@ -25,6 +42,9 @@ describe.skipIf(!LIVE_ENABLED)("opt-in live UI composition evaluation", () => {
         spec: SurfaceSpec;
         repairCount: 0 | 1;
         fallbackUsed: boolean;
+        firstFailureCategory: SurfacePlanFirstFailureCategory;
+        firstFailureCodes: readonly SurfacePlanFirstFailureCode[];
+        schemaIssues: readonly SurfacePlanSchemaIssueDiagnostic[];
       }>;
     };
     if (!compositionModule.composeSurfacePlan) {
@@ -35,6 +55,7 @@ describe.skipIf(!LIVE_ENABLED)("opt-in live UI composition evaluation", () => {
 
     const report = await runLiveUiQualityEvaluation({
       enabled: true,
+      cases: LIVE_CASES,
       compose: async (testCase) => {
         const recorded = recordedUiQualityCompilationInput(testCase);
         const retrieval = recorded.retrieval;
@@ -54,60 +75,34 @@ describe.skipIf(!LIVE_ENABLED)("opt-in live UI composition evaluation", () => {
           },
           repairCount: result.repairCount,
           fallbackUsed: result.fallbackUsed,
+          compositionFirstFailureCategory: result.firstFailureCategory,
+          compositionFirstFailureCodes: result.firstFailureCodes,
+          compositionSchemaIssues: result.schemaIssues,
         };
       },
     });
 
-    console.info(JSON.stringify({
-      event: "ui_quality_live_report",
-      totals: report.totals,
-      cases: Object.fromEntries(
-        UI_QUALITY_CASES.map((testCase) => {
-          const samples = report.samples.filter((sample) => sample.caseId === testCase.id);
-          return [
-            testCase.id,
-            {
-              attempted: samples.length,
-              valid: samples.filter((sample) => sample.success).length,
-              firstPassValid: samples.filter((sample) => sample.firstPassValid).length,
-              repairs: samples.filter((sample) => sample.repairCount > 0).length,
-              fallbacks: samples.filter((sample) => sample.fallbackUsed).length,
-              recipeSelections: [...new Set(samples.map((sample) => sample.recipeId))],
-              issueCodes: [...new Set(samples.flatMap((sample) => sample.issueCodes))],
-            },
-          ];
-        }),
-      ),
-      recipeSelections: Object.fromEntries(
-        UI_QUALITY_CASES.map((testCase) => [
-          testCase.recipeId,
-          report.samples.filter((sample) => sample.recipeId === testCase.recipeId).length,
-        ]),
-      ),
-      structuralFingerprints: new Set(
-        report.samples.map((sample) => sample.structuralFingerprint),
-      ).size,
-      latencyMs: {
-        maximum: Math.max(...report.samples.map((sample) => sample.latencyMs)),
-        average: Math.round(
-          report.samples.reduce((total, sample) => total + sample.latencyMs, 0) /
-            report.samples.length,
-        ),
-      },
-    }));
+    for (const diagnostic of liveUiQualityDiagnostics(report)) {
+      console.info(JSON.stringify(diagnostic));
+    }
 
-    const firstPassRate = report.totals.firstPassValid / report.totals.attempted;
-    expect(report.totals.attempted).toBe(UI_QUALITY_CASES.length * 3);
-    expect(firstPassRate).toBeGreaterThanOrEqual(0.95);
+    expect(report.totals.attempted).toBe(LIVE_CASES.length * 3);
+    if (!FOCUSED_CASES_REQUESTED) {
+      const firstPassRate = report.totals.firstPassQualityValid / report.totals.attempted;
+      expect(firstPassRate).toBeGreaterThanOrEqual(0.95);
+    }
     expect(report.totals.fallbacks).toBe(0);
-    expect(report.totals.valid).toBe(report.totals.attempted);
+    expect(report.totals.qualityValid).toBe(report.totals.attempted);
+    expect(report.totals.structuralConformant).toBe(report.totals.attempted);
+    expect(report.totals.accepted).toBe(report.totals.attempted);
+    expect(report.samples.every((sample) => sample.structuralConformant)).toBe(true);
     expect(new Set(report.samples.map((sample) => sample.recipeId))).toEqual(
-      new Set(UI_QUALITY_CASES.map((testCase) => testCase.recipeId)),
+      new Set(LIVE_CASES.map((testCase) => testCase.recipeId)),
     );
   }, 900_000);
 });
 
-describe.skipIf(LIVE_ENABLED)("opt-in live UI composition evaluation", () => {
+describe.skipIf(LIVE_REQUESTED)("opt-in live UI composition evaluation", () => {
   it("stays disabled without both explicit opt-in and a Gemini key", () => {
     expect(LIVE_ENABLED).toBe(false);
   });

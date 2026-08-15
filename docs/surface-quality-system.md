@@ -10,9 +10,9 @@ The primary audience is hiring teams evaluating the lab as a portfolio project. 
 
 - The model-facing `SurfacePlan` is a discriminated union with `kind`, `recipeId`, `density`, `emphasis`, and ordered capability-specific modules.
 - Recipes are `weather.snapshot`, `weather.decision`, `weather.outlook`, `comparison.verdict`, `comparison.scorecard`, `comparison.trend`, `research.brief`, `research.timeline`, and `research.claims`.
-- Weather measurements are copied from normalized server evidence. Search-backed claims retain server-owned source IDs. Plans never contain URLs, CSS, HTML, JavaScript, or arbitrary component names.
+- Weather planning receives an index-preserving qualitative manifest; measurements, coordinates, provider steps, and source URLs remain server-side and are copied only by the trusted compiler. Search-backed claims retain server-owned source IDs. Plans never contain URLs, CSS, HTML, JavaScript, or arbitrary component names.
 - A deterministic compiler converts `SurfacePlan` to the trusted `SurfaceSpec`; the existing compiler converts that spec to A2UI v0.9.1 messages.
-- One repair attempt is allowed. A second failure compiles a deterministic domain recipe from available evidence.
+- One repair attempt is allowed. A second failure compiles an intent-specific deterministic domain recipe from available evidence and revalidates it against the original prompt and client context.
 - `POST /api/agent` remains request-compatible. Its trace may add safe recipe, density, emphasis, quality-check, repair-category, and compiler metadata.
 
 ## Visual grammar
@@ -28,7 +28,7 @@ The primary audience is hiring teams evaluating the lab as a portfolio project. 
 - Keep the existing 40-prompt safety suite.
 - Add 18 recorded-evidence UI-quality cases, two per recipe, covering recipe fit, required facts, module ordering, density, source coverage, and content budgets.
 - `npm run eval:ui` runs deterministic quality, component, accessibility, overflow, and screenshot checks.
-- `npm run eval:ui:live` is opt-in and runs three composition samples per case against recorded evidence.
+- `npm run eval:ui:live` is opt-in and runs three composition samples per case against recorded evidence. It reports quality validity separately from conformance with explicit ordered-component and semantic-variant contracts, while retaining fingerprints as diagnostics.
 - Store approved screenshots for one prompt per recipe at 320, 390, 768, and 1440 pixels.
 
 ## Commands
@@ -60,9 +60,9 @@ The primary audience is hiring teams evaluating the lab as a portfolio project. 
 ## Release criteria
 
 - 100% valid trusted output or deterministic safe fallback; zero unsafe URLs.
-- At least 95% first-pass validity across 54 opt-in live composition samples and no fallback across the 18 supported quality cases.
+- At least 95% first-pass quality validity across 54 opt-in live composition samples, with all 54 quality-valid and structurally conformant and no fallback across the 18 supported quality cases.
 - Complete requested location, unit, time-range, comparison-criteria, and cited-evidence coverage.
-- Every recipe is selected for a representative prompt and produces the expected structural fingerprint.
+- Every recipe is selected for a representative prompt and satisfies its explicit required component order and semantic-variant contract; structural fingerprints remain diagnostic rather than fixture-equality gates.
 - Zero serious axe findings or horizontal overflow at 320, 390, 768, and 1440 pixels; visible focus and reduced-motion behavior remain correct.
 - All nine reference surfaces receive an owner review score of at least 4/5 for relevance, hierarchy, scanability, and balance.
 - Existing tests, evaluations, lint, typecheck, build, preview smoke tests, production smoke tests, and portfolio checks pass.

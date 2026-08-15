@@ -8,6 +8,7 @@ import {
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ZodTypeAny } from "zod";
+import surfaceStyles from "./styles.css?raw";
 
 import {
   A2UI_VERSION,
@@ -127,6 +128,36 @@ describe("SurfaceFrame trusted contract", () => {
   it.each(EMPHASES)("accepts the approved %s emphasis enum", (emphasis) => {
     const schema = requiredSchema("SurfaceFrameNodeSchema");
     expect(schema.safeParse({ ...surfaceFrameNode, emphasis }).success).toBe(true);
+  });
+
+  it("keeps risk-emphasis modules in authored DOM and visual order", () => {
+    renderTrustedSurface([
+      {
+        ...surfaceFrameNode,
+        children: ["answer", "alert"],
+        emphasis: "risk",
+      },
+      {
+        id: "answer",
+        component: "TextBlock",
+        text: "Answer first.",
+        tone: "default",
+      },
+      {
+        id: "alert",
+        component: "WeatherAlert",
+        title: "Risk detail",
+        severity: "moderate",
+        description: "Review this after the primary answer.",
+      },
+    ]);
+
+    const modules = [...document.querySelectorAll(".a2ui-surface-frame__module")];
+    expect(modules[0]).toHaveTextContent("Answer first.");
+    expect(modules[1]).toHaveTextContent("Risk detail");
+    expect(surfaceStyles).not.toMatch(
+      /data-emphasis=["']risk["'][\s\S]{0,160}\border\s*:/,
+    );
   });
 
   it.each([

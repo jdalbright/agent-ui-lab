@@ -13,7 +13,7 @@ describe("surface composer runtime contract", () => {
     expect(config.surfaceComposerVersion).toBe("spec-v1");
   });
 
-  it.each(["spec-v1", "plan-v2"] as const)(
+  it.each(["spec-v1", "plan-v2", "grammar-v3"] as const)(
     "accepts the supported %s composer version",
     (surfaceComposerVersion) => {
       const result = readRuntimeConfig({
@@ -43,4 +43,31 @@ describe("surface composer runtime contract", () => {
     });
     expect(JSON.stringify(result)).not.toContain(privateValue);
   });
+
+  it.each([0, 10, 50, 100])("accepts a bounded grammar-v3 rollout percentage of %i", (percent) => {
+    const result = readRuntimeConfig({
+      NODE_ENV: "test",
+      SURFACE_COMPOSER_VERSION: "grammar-v3",
+      SURFACE_GRAMMAR_V3_ROLLOUT_PERCENT: String(percent),
+    });
+
+    expect(result).toMatchObject({
+      ready: true,
+      config: { surfaceGrammarV3RolloutPercent: percent },
+    });
+  });
+
+  it.each(["-1", "101", "10.5", "many"])(
+    "rejects invalid grammar-v3 rollout percentage %s without echoing it",
+    (percent) => {
+      const result = readRuntimeConfig({
+        NODE_ENV: "test",
+        SURFACE_COMPOSER_VERSION: "grammar-v3",
+        SURFACE_GRAMMAR_V3_ROLLOUT_PERCENT: percent,
+      });
+
+      expect(result).toEqual({ ready: false, issues: ["SURFACE_GRAMMAR_V3_ROLLOUT_INVALID"] });
+      expect(JSON.stringify(result)).not.toContain(percent);
+    },
+  );
 });

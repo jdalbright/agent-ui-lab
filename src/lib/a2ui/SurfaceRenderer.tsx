@@ -6,7 +6,7 @@ import {
   type SurfaceModel,
 } from "@a2ui/web_core/v0_9";
 import { A2UI_VERSION } from "@shared/constants";
-import { trustedCatalog } from "./catalog";
+import { trustedCatalogs } from "./catalog";
 import { parseTrustedMessages } from "./message-validation";
 
 type TrustedSurface = SurfaceModel<ReactComponentImplementation>;
@@ -36,7 +36,7 @@ export function SurfaceRenderer({
   const rendered = useMemo<{ failure: Error | null; surfaces: TrustedSurface[] }>(() => {
     try {
       const parsedMessages = parseTrustedMessages(messages);
-      const processor = new MessageProcessor([trustedCatalog], onAction, { version: A2UI_VERSION });
+      const processor = new MessageProcessor([...trustedCatalogs], onAction, { version: A2UI_VERSION });
       processor.processMessages(parsedMessages);
       return { failure: null, surfaces: [...processor.model.surfacesMap.values()] };
     } catch (error) {

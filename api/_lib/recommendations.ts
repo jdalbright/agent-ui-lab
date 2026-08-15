@@ -270,13 +270,13 @@ function addLocalCalendarDays(date: string, offset: number): string {
   return target.toISOString().slice(0, 10);
 }
 
-function requestedActivityWindow(
-  sortedHours: readonly NormalizedHourlyForecast[],
-  options: ActivityWindowOptions,
-  activity: string,
-  durationHours: number,
-): ActivityWindowRecommendation | null {
-  if (!options.targetLocalTime) return null;
+interface RequestedActivityDate {
+  date: string;
+  referenceTimestamp: number;
+  timeZone: string;
+}
+
+function requestedActivityDate(options: ActivityWindowOptions): RequestedActivityDate | null {
   if (
     options.targetDayOffset === undefined ||
     !Number.isInteger(options.targetDayOffset) ||
@@ -286,14 +286,28 @@ function requestedActivityWindow(
     throw new RangeError("targetDayOffset must be an integer from 0 through 9.");
   }
   if (!options.timeZone || !options.referenceTime) return null;
+  const referenceLocal = localDateTime(options.referenceTime, options.timeZone);
+  return {
+    date: addLocalCalendarDays(referenceLocal.date, options.targetDayOffset),
+    referenceTimestamp: Date.parse(options.referenceTime),
+    timeZone: options.timeZone,
+  };
+}
+
+function requestedActivityWindow(
+  sortedHours: readonly NormalizedHourlyForecast[],
+  options: ActivityWindowOptions,
+  activity: string,
+  durationHours: number,
+  requestedDate: RequestedActivityDate,
+): ActivityWindowRecommendation | null {
+  if (!options.targetLocalTime) return null;
   const timeMatch = /^(?:[01]\d|2[0-3]):[0-5]\d$/.exec(options.targetLocalTime);
   if (!timeMatch) throw new RangeError("targetLocalTime must use 24-hour HH:MM format.");
   const [targetHour, targetMinute] = options.targetLocalTime.split(":").map(Number);
-  const referenceLocal = localDateTime(options.referenceTime, options.timeZone);
-  const targetDate = addLocalCalendarDays(referenceLocal.date, options.targetDayOffset);
   const startIndex = sortedHours.findIndex((hour) => {
-    const local = localDateTime(hour.startTime, options.timeZone as string);
-    return local.date === targetDate && local.hour === targetHour;
+    const local = localDateTime(hour.startTime, requestedDate.timeZone);
+    return local.date === requestedDate.date && local.hour === targetHour;
   });
   if (startIndex < 0) return null;
 
@@ -325,14 +339,37 @@ export function recommendActivityWindow(
   }
   const activity = options.activity?.trim() || "outdoor activity";
   const sortedHours = [...hours].sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime));
+  let requestedDate: RequestedActivityDate | undefined;
+  if (options.targetDayOffset !== undefined) {
+    const resolvedDate = requestedActivityDate(options);
+    if (!resolvedDate) return null;
+    requestedDate = resolvedDate;
+  }
   if (options.targetLocalTime) {
-    return requestedActivityWindow(sortedHours, options, activity, durationHours);
+    if (!requestedDate) {
+      throw new RangeError("targetDayOffset must be an integer from 0 through 9.");
+    }
+    return requestedActivityWindow(sortedHours, options, activity, durationHours, requestedDate);
   }
   let best: ActivityWindowRecommendation | null = null;
 
   for (let index = 0; index <= sortedHours.length - durationHours; index += 1) {
     const candidateHours = sortedHours.slice(index, index + durationHours);
     if (!isConsecutiveWindow(candidateHours)) continue;
+    if (
+      requestedDate &&
+      Date.parse(candidateHours[0].startTime) < requestedDate.referenceTimestamp
+    ) {
+      continue;
+    }
+    if (
+      requestedDate &&
+      candidateHours.some(
+        (hour) => localDateTime(hour.startTime, requestedDate.timeZone).date !== requestedDate.date,
+      )
+    ) {
+      continue;
+    }
     const candidateScore = scoreActivityWindow(candidateHours, options);
     const startTime = candidateHours[0].startTime;
     const endTime = candidateHours[candidateHours.length - 1].endTime;
@@ -377,7 +414,7 @@ export function scoreActivityWindows(
       activity: options.activity ?? "walk",
       durationHours: options.durationHours ?? 2,
       alerts: locationWeather.alerts,
-      ...(options.targetLocalTime
+      ...(options.targetLocalTime || options.targetDayOffset !== undefined
         ? {
             timeZone: locationWeather.current.timeZone,
             referenceTime: locationWeather.current.observedAt,

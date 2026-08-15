@@ -1,4 +1,4 @@
-import { A2UI_VERSION, CATALOG_ID } from "./constants.js";
+import { A2UI_VERSION, CATALOG_ID_V2, CATALOG_ID_V3 } from "./constants.js";
 import { A2uiMessageSchema, type A2uiMessage, type SurfaceNode } from "./schemas.js";
 import { validateSurfaceSpec } from "./surface-validation.js";
 
@@ -53,6 +53,13 @@ function normalizeComponents(rootId: string, components: readonly SurfaceNode[])
   });
 }
 
+function catalogIdForSurface(rootId: string, components: readonly SurfaceNode[]): typeof CATALOG_ID_V2 | typeof CATALOG_ID_V3 {
+  const root = components.find((component) => component.id === rootId);
+  return root?.component === "SurfaceFrame" && root.compositionMode === "grammar-v3"
+    ? CATALOG_ID_V3
+    : CATALOG_ID_V2;
+}
+
 export function compileSurfaceSpec(options: CompileSurfaceOptions): CompiledSurfaceMessages;
 export function compileSurfaceSpec(
   surfaceId: string,
@@ -79,7 +86,7 @@ export function compileSurfaceSpec(
       version: A2UI_VERSION,
       createSurface: {
         surfaceId,
-        catalogId: CATALOG_ID,
+        catalogId: catalogIdForSurface(validation.spec.rootId, validation.spec.components),
         sendDataModel: false,
       },
     },

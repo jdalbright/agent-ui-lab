@@ -7,7 +7,9 @@ import {
   SurfacePlanSchema,
   buildFallbackSurfacePlan,
   compileSurfacePlan,
+  evaluateSurfacePlanQuality,
   validateSurfacePlan,
+  type SurfacePlan,
 } from "./surface-plan.js";
 
 const clientContext: ClientContext = {
@@ -548,6 +550,71 @@ describe("SurfacePlan contract", () => {
     if (!result.success) expect(result.issues.join(" ")).toMatch(/recipe|module|required/i);
   });
 
+  it("requires each recipe's defining module immediately after its primary answer", () => {
+    const plan = structuredClone(plansByRecipe["weather.outlook"]);
+    const modules = plan.modules as Array<Record<string, unknown>>;
+    modules.splice(1, 0, {
+      type: "hourly",
+      variant: "strip",
+      label: "Next two hours",
+      locationIndex: 0,
+      hourIndexes: [0, 1],
+    });
+
+    const result = validateSurfacePlan(plan, validationContextFor("weather.outlook"));
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/defining daily module.*immediately/i);
+  });
+
+  it.each([
+    ["weather.decision", "snapshot"],
+    ["comparison.verdict", "balanced"],
+  ] as const)("rejects the wrong primary semantic variant for %s", (recipeId, variant) => {
+    const plan = structuredClone(plansByRecipe[recipeId]);
+    (plan.modules as Array<Record<string, unknown>>)[0].variant = variant;
+
+    const result = validateSurfacePlan(plan, validationContextFor(recipeId));
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/requires the .* variant/i);
+  });
+
+  it("rejects optional modules that violate the recipe's canonical semantic order", () => {
+    const plan = structuredClone(plansByRecipe["weather.snapshot"]);
+    const modules = plan.modules as Array<Record<string, unknown>>;
+    const metricsIndex = modules.findIndex((module) => module.type === "metrics");
+    const [metrics] = modules.splice(metricsIndex, 1);
+    const sourceIndex = modules.findIndex((module) => module.type === "sources");
+    modules.splice(sourceIndex, 0, {
+      type: "alerts",
+      locationIndex: 0,
+      alertIndexes: [0],
+    }, metrics);
+
+    const result = validateSurfacePlan(plan, validationContextFor("weather.snapshot"));
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/canonical semantic order/i);
+  });
+
+  it.each([
+    "Show me Raleigh for the next five days.",
+    "Show me Raleigh for the next two weeks.",
+    "Show me Raleigh for the seven-day period.",
+  ])("selects the outlook recipe for a word-number weather range: %s", (prompt) => {
+    const plan = structuredClone(plansByRecipe["weather.snapshot"]);
+    const result = validateSurfacePlan(plan, {
+      sources: weatherRetrieval.sources,
+      evidence: weatherRetrieval.evidence,
+      prompt,
+      clientContext,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/requested weather\.outlook intent/i);
+  });
+
   it("rejects a recipe whose namespace does not match its plan kind", () => {
     const plan = {
       ...structuredClone(plansByRecipe["weather.snapshot"]),
@@ -581,6 +648,43 @@ describe("SurfacePlan contract", () => {
     });
 
     expect(SurfacePlanSchema.safeParse(plan).success).toBe(false);
+  });
+
+  it.each([
+    ["raw URL", "Read https://attacker.example/payload before rendering."],
+    ["www URL", "Read www.attacker.example/payload before rendering."],
+    ["HTML tag", "Render <img src=x onerror=alert(1)> as the answer."],
+    ["slash-delimited markup", "Render <svg/onload=alert(1)> as the answer."],
+    ["JavaScript scheme", "Open javascript:alert(document.cookie) now."],
+    ["data scheme", "Open data:text/html,<script>alert(1)</script> now."],
+    ["VBScript scheme", "Open vbscript:msgbox('x') now."],
+  ])("rejects %s content in model-authored plan text", (_label, unsafeText) => {
+    const plan = structuredClone(plansByRecipe["research.brief"]);
+    const lead = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "lead",
+    );
+    lead!.summary = unsafeText;
+
+    expect(SurfacePlanSchema.safeParse(plan).success).toBe(false);
+  });
+
+  it("applies the text boundary to nested cells while preserving ordinary technical prose", () => {
+    const unsafePlan = structuredClone(plansByRecipe["comparison.verdict"]);
+    const table = (unsafePlan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "table",
+    );
+    const rows = table!.rows as string[][];
+    rows[0][1] = "See https://attacker.example/details";
+
+    const legitimatePlan = structuredClone(plansByRecipe["research.brief"]);
+    const lead = (legitimatePlan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "lead",
+    );
+    lead!.summary =
+      "HTML, CSS, and JavaScript remain application-owned; Node.js is discussed as ordinary prose.";
+
+    expect(SurfacePlanSchema.safeParse(unsafePlan).success).toBe(false);
+    expect(SurfacePlanSchema.safeParse(legitimatePlan).success).toBe(true);
   });
 });
 
@@ -627,6 +731,32 @@ describe("SurfacePlan evidence references", () => {
     if (!result.success) expect(result.issues.join(" ")).toMatch(/evidence|reference|index|range/i);
   });
 
+  it.each([
+    [0, true],
+    [1, true],
+    [2, false],
+  ] as const)(
+    "allows at most one recommended option in an authored verdict (%i recommended)",
+    (recommendedCount, expectedSuccess) => {
+      const plan = structuredClone(plansByRecipe["comparison.verdict"]);
+      const summary = (plan.modules as Array<Record<string, unknown>>).find(
+        (module) => module.type === "summary",
+      );
+      const items = summary?.items as Array<Record<string, unknown>>;
+      items.forEach((item, index) => {
+        item.recommended = index < recommendedCount;
+      });
+
+      const result = validateSurfacePlan(plan, {
+        sources: searchSources,
+        evidence: [],
+      });
+
+      expect(result.success).toBe(expectedSuccess);
+      if (!result.success) expect(result.issues.join(" ")).toMatch(/at most one option/i);
+    },
+  );
+
   it("requires exactly one final SourceList whose IDs cover every cited module and item", () => {
     const incomplete = structuredClone(plansByRecipe["research.claims"]);
     const sourceModule = (incomplete.modules as Array<Record<string, unknown>>).find(
@@ -650,6 +780,59 @@ describe("SurfacePlan evidence references", () => {
     const missingResult = validateSurfacePlan(missing, { sources: searchSources, evidence: [] });
     expect(missingResult.success).toBe(false);
     if (!missingResult.success) expect(missingResult.issues.join(" ")).toMatch(/exactly one.*sources/i);
+  });
+
+  it("requires support and challenge stances for an explicit two-sided research request", () => {
+    const plan = structuredClone(plansByRecipe["research.claims"]);
+    const evidence = (plan.modules as Array<{
+      type: string;
+      items?: Array<Record<string, unknown>>;
+    }>).find((module) => module.type === "evidence");
+    if (!evidence?.items) {
+      throw new TypeError("Research claims fixture is missing evidence.");
+    }
+    for (const item of evidence.items) item.stance = "neutral";
+
+    const result = validateSurfacePlan(plan, {
+      sources: searchSources,
+      evidence: [],
+      prompt: "Find evidence for and against this claim.",
+      clientContext,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.issues).toEqual(expect.arrayContaining([
+        expect.stringMatching(/supporting evidence/i),
+        expect.stringMatching(/challenging evidence/i),
+      ]));
+    }
+  });
+
+  it("fails the production requested-coverage check for all-neutral two-sided claims", () => {
+    const prompt = "Find evidence for and against this claim.";
+    const validPlan = SurfacePlanSchema.parse(plansByRecipe["research.claims"]);
+    const spec = compileSurfacePlan({
+      plan: validPlan,
+      retrieval: researchRetrieval,
+      clientContext,
+      prompt,
+    });
+    const neutralPlan = structuredClone(validPlan);
+    const evidence = neutralPlan.modules.find((module) => module.type === "evidence");
+    if (!evidence || evidence.type !== "evidence") {
+      throw new TypeError("Research claims fixture is missing evidence.");
+    }
+    for (const item of evidence.items) item.stance = "neutral";
+
+    const checks = evaluateSurfacePlanQuality(neutralPlan, {
+      sources: searchSources,
+      evidence: [],
+      prompt,
+      clientContext,
+    }, spec);
+
+    expect(checks.requested_coverage).toBe(false);
   });
 
   it.each([
@@ -688,6 +871,39 @@ describe("SurfacePlan evidence references", () => {
       (module) => module.type === "table",
     );
     (table!.rows as string[][])[0][1] = "9999";
+
+    const result = validateSurfacePlan(plan, { sources: searchSources, evidence: [] });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/chart.*table.*aligned/i);
+  });
+
+  it("aligns complete currency, signed, decimal, and accounting table values with chart data", () => {
+    const plan = structuredClone(plansByRecipe["comparison.trend"]);
+    const chart = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "chart",
+    );
+    const table = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "table",
+    );
+    (chart!.series as Array<Record<string, unknown>>)[0].values = [1200.5, -7, 6];
+    (table!.rows as string[][])[0] = ["Option Alpha", "$1,200.50", "(7.00)", "+6.00"];
+
+    const result = validateSurfacePlan(plan, { sources: searchSources, evidence: [] });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects malformed formatted table values instead of extracting a partial chart value", () => {
+    const plan = structuredClone(plansByRecipe["comparison.trend"]);
+    const chart = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "chart",
+    );
+    const table = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "table",
+    );
+    (chart!.series as Array<Record<string, unknown>>)[0].values = [1200, 7, 6];
+    (table!.rows as string[][])[0][1] = "$1,200 or $2,400";
 
     const result = validateSurfacePlan(plan, { sources: searchSources, evidence: [] });
 
@@ -938,6 +1154,55 @@ describe("weather-backed comparison integrity", () => {
     }
   });
 
+  it("accepts a requested alias when geocoding resolves a different canonical place name", () => {
+    const retrieval = structuredClone(weatherRetrieval);
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations[0].location = {
+      name: "New York, NY, USA",
+      latitude: 40.7128,
+      longitude: -74.006,
+      placeId: "new-york-place",
+    };
+    (retrieval.evidence[0].arguments as { location?: string }).location = "NYC";
+    const plan = structuredClone(plansByRecipe["weather.snapshot"]);
+
+    const validation = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt: "What is the weather in NYC?",
+      clientContext,
+    });
+
+    expect(validation).toMatchObject({ success: true });
+  });
+
+  it.each([
+    ["What is the weather in Raleigh right now?", /Raleigh/i],
+    ["Weather in New Orleans?", /New Orleans/i],
+    ["Show Raleigh weather right now.", /Raleigh/i],
+  ] as const)("rejects wrong-city evidence for: %s", (prompt, requestedLocation) => {
+    const retrieval = structuredClone(weatherRetrieval);
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations[0].location = {
+      name: "New York, NY, USA",
+      latitude: 40.7128,
+      longitude: -74.006,
+      placeId: "new-york-place",
+    };
+    (retrieval.evidence[0].arguments as { location?: string }).location = "New York, NY";
+    const plan = structuredClone(plansByRecipe["weather.snapshot"]);
+
+    const validation = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    });
+
+    expect(validation.success).toBe(false);
+    if (!validation.success) expect(validation.issues.join(" ")).toMatch(requestedLocation);
+  });
+
   it("extracts locations from a versus prompt without a compare verb", () => {
     const { retrieval, plan } = weatherComparisonFixture();
     const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
@@ -1085,15 +1350,73 @@ describe("weather-backed comparison integrity", () => {
       ],
     });
   });
+
+  it("aligns tomorrow to each location's local calendar and validates the evidence winner", () => {
+    const retrieval = structuredClone(weatherRetrieval);
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    const raleigh = structuredClone(raleighWeather);
+    raleigh.current.observedAt = "2026-08-02T23:30:00.000Z";
+    raleigh.daily = [
+      { ...structuredClone(raleighWeather.daily[0]), date: "2026-08-03", high: 80 },
+      { ...structuredClone(raleighWeather.daily[1]), date: "2026-08-04", high: 81 },
+    ];
+    const tokyo = structuredClone(raleighWeather);
+    tokyo.location = {
+      name: "Tokyo, Japan",
+      latitude: 35.6762,
+      longitude: 139.6503,
+      placeId: "tokyo-place",
+    };
+    tokyo.current.observedAt = "2026-08-02T23:30:00.000Z";
+    tokyo.current.timeZone = "Asia/Tokyo";
+    tokyo.daily = [
+      { ...structuredClone(raleighWeather.daily[0]), date: "2026-08-03", high: 100 },
+      { ...structuredClone(raleighWeather.daily[1]), date: "2026-08-04", high: 70 },
+    ];
+    result.locations = [raleigh, tokyo];
+    delete (retrieval.evidence[0].arguments as { location?: string }).location;
+    (retrieval.evidence[0].arguments as { locations?: string[] }).locations = ["Raleigh", "Tokyo"];
+    const prompt = "Which city is warmer tomorrow: Raleigh or Tokyo?";
+
+    const plan = buildFallbackSurfacePlan({ kind: "comparison", prompt, retrieval, clientContext });
+    const spec = compileSurfacePlan({ plan, retrieval, clientContext, prompt });
+
+    expect(plan.modules.find((module) => module.type === "summary")).toMatchObject({
+      recommendedLocationIndex: 0,
+    });
+    expect(spec.components.find((node) => node.component === "ComparisonTable")).toMatchObject({
+      rows: [["Tomorrow", "80°F", "70°F"]],
+    });
+  });
+
+  it("rejects a weather recommendation that contradicts a deterministic objective", () => {
+    const { retrieval, plan } = weatherComparisonFixture();
+    const prompt = "Compare Raleigh and Charlotte over the next two hours and choose the drier location.";
+
+    const validation = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    });
+
+    expect(validation.success).toBe(false);
+    if (!validation.success) {
+      expect(validation.issues.join(" ")).toMatch(/deterministic evidence winner/i);
+    }
+  });
 });
 
 describe("requested comparison coverage", () => {
   it.each([
-    "Compare Framework A and Framework B on warranty length and repairability.",
-    "Compare Framework A and Framework B for warranty length and repairability.",
-    "Compare Framework A and Framework B for repairability.",
-    "Framework A versus Framework B: warranty length and repairability.",
-  ])("rejects a scorecard that omits explicitly requested criteria: %s", (prompt) => {
+    ["Compare Framework A and Framework B on warranty length and repairability.", ["warranty length", "repairability"]],
+    ["Compare Framework A and Framework B for warranty length and repairability.", ["warranty length", "repairability"]],
+    ["Compare Framework A and Framework B for repairability.", ["repairability"]],
+    ["Framework A versus Framework B: warranty length and repairability.", ["warranty length", "repairability"]],
+    ["Score Framework A and Framework B using maintainability and ecosystem maturity.", ["maintainability", "ecosystem maturity"]],
+    ["Compare Framework A and Framework B with warranty length and repairability.", ["warranty length", "repairability"]],
+    ["Compare Framework A and Framework B using bundle size and accessibility.", ["bundle size", "accessibility"]],
+  ] as const)("rejects a scorecard that omits explicitly requested criteria: %s", (prompt, criteria) => {
     const plan = structuredClone(plansByRecipe["comparison.scorecard"]);
     const validation = validateSurfacePlan(plan, {
       sources: searchSources,
@@ -1104,12 +1427,30 @@ describe("requested comparison coverage", () => {
 
     expect(validation.success).toBe(false);
     if (!validation.success) {
-      expect(validation.issues.join(" ")).toMatch(/warranty length|repairability/i);
+      for (const criterion of criteria) {
+        expect(validation.issues.join(" ")).toContain(criterion);
+      }
     }
   });
 });
 
 describe("compileSurfacePlan", () => {
+  it("refuses to compile a plan containing unsafe authored text", () => {
+    const plan = structuredClone(plansByRecipe["research.brief"]);
+    const lead = (plan.modules as Array<Record<string, unknown>>).find(
+      (module) => module.type === "lead",
+    );
+    lead!.summary = "Use <script>location='https://attacker.example'</script> for the answer.";
+
+    expect(() =>
+      compileSurfacePlan({
+        plan: plan as unknown as SurfacePlan,
+        retrieval: researchRetrieval,
+        clientContext,
+      })
+    ).toThrow(/cannot compile invalid SurfacePlan.*safe declarative text/i);
+  });
+
   it("replaces an unsupported quantitative weather hero claim with trusted copy", () => {
     const plan = structuredClone(plansByRecipe["weather.snapshot"]);
     const hero = (plan.modules as Array<Record<string, unknown>>).find(
@@ -1269,12 +1610,36 @@ describe("compileSurfacePlan", () => {
     });
   });
 
+  it("requires every server-issued weather source in the final source list", () => {
+    const additional: SourceRecord = {
+      id: "src_weather2",
+      title: "Weather alert authority",
+      url: "https://weather.gov/alerts/raleigh",
+      provider: "google-weather",
+      accessedAt: "2026-08-02T14:00:00.000Z",
+    };
+    const retrieval: GeminiRetrievalResult = {
+      ...structuredClone(weatherRetrieval),
+      sources: Object.freeze([Object.freeze(weatherSource), Object.freeze(additional)]),
+    };
+    const plan = structuredClone(plansByRecipe["weather.snapshot"]);
+
+    const result = validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/final sources.*src_weather2/i);
+  });
+
   it("compiles a wettest-day recommendation from the referenced daily evidence", () => {
     const plan = structuredClone(plansByRecipe["weather.outlook"]);
-    const sourceIndex = (plan.modules as Array<{ type: string }>).findIndex(
-      (module) => module.type === "sources",
+    const dailyIndex = (plan.modules as Array<{ type: string }>).findIndex(
+      (module) => module.type === "daily",
     );
-    (plan.modules as unknown[]).splice(sourceIndex, 0, {
+    if (dailyIndex < 0) throw new TypeError("Outlook fixture is missing its daily module.");
+    (plan.modules as unknown[]).splice(dailyIndex + 1, 0, {
       type: "recommendation",
       locationIndex: 0,
       dayIndex: 1,
@@ -1320,7 +1685,7 @@ describe("compileSurfacePlan", () => {
     result.activityWindows[0].endTime = "2026-08-02T15:00:00.000Z";
     result.activityWindows[0].label = "2-hour run window at requested time";
     const plan = SurfacePlanSchema.parse(structuredClone(plansByRecipe["weather.decision"]));
-    const prompt = "Can I run at 7 AM in Denver?";
+    const prompt = "Can I take a 2-hour run at 7 AM in Denver today?";
 
     expect(
       validateSurfacePlan(plan, {
@@ -1350,6 +1715,659 @@ describe("compileSurfacePlan", () => {
 });
 
 describe("domain-specific deterministic SurfacePlan fallbacks", () => {
+  function weatherTrendRetrieval(names: readonly string[], dates: readonly string[]) {
+    const retrieval = structuredClone(weatherRetrieval);
+    (retrieval.evidence[0].arguments as { location?: string; locations?: string[] }).locations = [
+      ...names,
+    ];
+    delete (retrieval.evidence[0].arguments as { location?: string }).location;
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations = names.map((name, locationIndex) => ({
+      ...structuredClone(raleighWeather),
+      location: {
+        name,
+        latitude: 25 + locationIndex * 5,
+        longitude: -80 - locationIndex * 10,
+        placeId: `place-${locationIndex}`,
+      },
+      daily: dates.map((date, dayIndex) => ({
+        ...structuredClone(raleighWeather.daily[dayIndex % raleighWeather.daily.length]),
+        date,
+        high: 80 + locationIndex * 4 + dayIndex,
+      })),
+    }));
+    return retrieval;
+  }
+
+  it("sanitizes prompt and provider prose before building a deterministic fallback plan", () => {
+    const unsafeRetrieval = structuredClone(researchRetrieval);
+    unsafeRetrieval.outputText =
+      "HTML and CSS remain useful. <script>alert(1)</script> Read https://attacker.example/details.";
+    (unsafeRetrieval.sources as SourceRecord[])[0].title =
+      "<strong>JavaScript documentation</strong> javascript:alert(1)";
+    const prompt =
+      "What evidence supports HTML, CSS, and JavaScript? See www.attacker.example/payload";
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "research",
+      prompt,
+      retrieval: unsafeRetrieval,
+      clientContext,
+    });
+    const serialized = JSON.stringify(plan);
+
+    expect(serialized).toContain("HTML");
+    expect(serialized).toContain("CSS");
+    expect(serialized).toContain("JavaScript");
+    expect(serialized).not.toMatch(/https?:\/\/|www\.|<\/?[a-z]|\b(?:javascript|data|vbscript)\s*:/i);
+    expect(() => compileSurfacePlan({ plan, retrieval: unsafeRetrieval, clientContext, prompt })).not.toThrow();
+  });
+
+  it("sanitizes weather-provider prose copied into a deterministic fallback plan", () => {
+    const unsafeRetrieval = structuredClone(weatherRetrieval);
+    const result = unsafeRetrieval.evidence[0].result as {
+      locations: Array<typeof raleighWeather>;
+    };
+    result.locations[0].location.name =
+      "<strong>Raleigh</strong> https://attacker.example/location";
+    result.locations[0].current.conditionText =
+      "Clear <script>alert(1)</script> javascript:alert(1)";
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt: "What is the weather in Raleigh?",
+      retrieval: unsafeRetrieval,
+      clientContext,
+    });
+    const serialized = JSON.stringify(plan);
+
+    expect(serialized).toContain("Raleigh");
+    expect(serialized).toContain("Clear");
+    expect(serialized).not.toMatch(/https?:\/\/|www\.|<\/?[a-z]|\b(?:javascript|data|vbscript)\s*:/i);
+    expect(SurfacePlanSchema.safeParse(plan).success).toBe(true);
+  });
+
+  it("centers decision fallback hours on the deterministic activity window", () => {
+    const prompt = "When should I walk in Raleigh?";
+    const retrieval = structuredClone(weatherRetrieval);
+    const result = retrieval.evidence[0].result as {
+      locations: Array<typeof raleighWeather>;
+      activityWindows: Array<{
+        startTime: string;
+        endTime: string;
+      }>;
+    };
+    result.locations[0].hourly = Array.from({ length: 40 }, (_, index) => ({
+      ...structuredClone(raleighWeather.hourly[index % raleighWeather.hourly.length]),
+      startTime: new Date(Date.parse("2026-08-02T14:00:00.000Z") + index * 3_600_000).toISOString(),
+      endTime: new Date(Date.parse("2026-08-02T15:00:00.000Z") + index * 3_600_000).toISOString(),
+    }));
+    result.activityWindows[0].startTime = result.locations[0].hourly[30].startTime;
+    result.activityWindows[0].endTime = result.locations[0].hourly[32].endTime;
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval,
+      clientContext,
+    });
+
+    expect(plan.modules.find((module) => module.type === "hourly")).toMatchObject({
+      hourIndexes: [29, 30, 31, 32],
+    });
+  });
+
+  it("preserves a named two-day weather comparison in the deterministic trend fallback", () => {
+    const prompt = "Compare Raleigh and Charlotte temperatures this Saturday and Sunday.";
+    const retrieval = weatherTrendRetrieval(
+      ["Raleigh, NC", "Charlotte, NC"],
+      ["2026-08-08", "2026-08-09"],
+    );
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "comparison",
+      prompt,
+      retrieval,
+      clientContext,
+    });
+
+    expect(plan).toMatchObject({ recipeId: "comparison.trend", density: "detailed", emphasis: "trend" });
+    expect(plan.modules.map((module) => module.type)).toEqual(["summary", "chart", "table", "sources"]);
+    expect(validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+    expect(() => compileSurfacePlan({ plan, retrieval, clientContext, prompt })).not.toThrow();
+  });
+
+  it("uses detailed outlook metadata and preserves an explicit extreme-day callout", () => {
+    const prompt = "Show Raleigh's five-day outlook and call out the wettest day.";
+    const retrieval = structuredClone(weatherRetrieval);
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations[0].daily = Array.from({ length: 6 }, (_, index) => ({
+      ...structuredClone(raleighWeather.daily[index % raleighWeather.daily.length]),
+      date: `2026-08-${String(index + 3).padStart(2, "0")}`,
+      precipitationProbability: index === 5 ? 99 : index === 3 ? 90 : 10 + index,
+    }));
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval,
+      clientContext,
+    });
+
+    expect(plan).toMatchObject({
+      recipeId: "weather.outlook",
+      density: "detailed",
+      emphasis: "trend",
+    });
+    expect(plan.modules.map((module) => module.type)).toEqual([
+      "hero",
+      "daily",
+      "recommendation",
+      "sources",
+    ]);
+    expect(plan.modules.find((module) => module.type === "daily")).toMatchObject({
+      dayIndexes: [0, 1, 2, 3, 4],
+    });
+    expect(plan.modules.find((module) => module.type === "recommendation")).toMatchObject({
+      dayIndex: 3,
+      signal: "wettest",
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+  });
+
+  it("uses the requested local tomorrow record without requiring an activity window", () => {
+    const prompt = "Show Tokyo weather tomorrow in ° C.";
+    const retrieval = structuredClone(weatherRetrieval);
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    const location = result.locations[0];
+    location.location = {
+      name: "Tokyo, Japan",
+      latitude: 35.6762,
+      longitude: 139.6503,
+      placeId: "tokyo-place",
+    };
+    location.current.timeZone = "Asia/Tokyo";
+    location.current.observedAt = "2026-08-02T14:00:00.000Z";
+    location.current.temperatureUnit = "C";
+    location.hourly = location.hourly.map((hour) => ({ ...hour, temperatureUnit: "C" as const }));
+    location.daily = location.daily.map((day) => ({ ...day, temperatureUnit: "C" as const }));
+    result.locations[0] = location;
+    (retrieval.evidence[0].arguments as { location?: string; units?: "metric" }).location = "Tokyo, Japan";
+    (retrieval.evidence[0].arguments as { units?: "metric" }).units = "metric";
+
+    const plan = buildFallbackSurfacePlan({ kind: "weather", prompt, retrieval, clientContext });
+
+    expect(plan).toMatchObject({ recipeId: "weather.outlook" });
+    expect(plan.modules.find((module) => module.type === "daily")).toMatchObject({
+      dayIndexes: [1],
+    });
+    expect(plan.modules.some(
+      (module) => module.type === "recommendation" && "activityWindowIndex" in module,
+    )).toBe(false);
+    expect(validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+  });
+
+  it("uses hourly as the defining outlook module for an explicit hour range", () => {
+    const prompt = "Show Raleigh weather for the next three hours.";
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval: weatherRetrieval,
+      clientContext,
+    });
+
+    expect(plan).toMatchObject({ recipeId: "weather.outlook" });
+    expect(plan.modules.map((module) => module.type)).toEqual(["hero", "hourly", "sources"]);
+    expect(plan.modules[1]).toMatchObject({
+      type: "hourly",
+      hourIndexes: [0, 1, 2],
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: weatherRetrieval.sources,
+      evidence: weatherRetrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+  });
+
+  it("builds and compiles a one-hour outlook", () => {
+    const prompt = "Show Raleigh weather for the next 1 hour.";
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval: weatherRetrieval,
+      clientContext,
+    });
+
+    expect(plan).toMatchObject({ recipeId: "weather.outlook" });
+    expect(plan.modules.find((module) => module.type === "hourly")).toMatchObject({
+      hourIndexes: [0],
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: weatherRetrieval.sources,
+      evidence: weatherRetrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+    expect(() => compileSurfacePlan({
+      plan,
+      retrieval: weatherRetrieval,
+      clientContext,
+      prompt,
+    })).not.toThrow();
+  });
+
+  it("selects an exact future hour in the weather location's local time", () => {
+    const prompt = "Show Tokyo weather at 9 AM next Tuesday.";
+    const retrieval = structuredClone(weatherRetrieval);
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    const location = result.locations[0];
+    location.location = {
+      name: "Tokyo, Japan",
+      latitude: 35.6762,
+      longitude: 139.6503,
+      placeId: "tokyo-place",
+    };
+    location.current.timeZone = "Asia/Tokyo";
+    location.hourly = Array.from({ length: 240 }, (_, index) => ({
+      ...structuredClone(raleighWeather.hourly[index % raleighWeather.hourly.length]),
+      startTime: new Date(Date.parse("2026-08-02T14:00:00.000Z") + index * 3_600_000).toISOString(),
+      endTime: new Date(Date.parse("2026-08-02T15:00:00.000Z") + index * 3_600_000).toISOString(),
+    }));
+    (retrieval.evidence[0].arguments as { location?: string }).location = "Tokyo, Japan";
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval,
+      clientContext,
+    });
+
+    expect(plan).toMatchObject({ recipeId: "weather.outlook" });
+    expect(plan.modules.find((module) => module.type === "hourly")).toMatchObject({
+      label: "9:00 AM local outlook",
+      locationIndex: 0,
+      hourIndexes: [34],
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+    expect(compileSurfacePlan({ plan, retrieval, clientContext, prompt }).components.find(
+      (node) => node.component === "HourlyForecast",
+    )).toMatchObject({ items: [expect.objectContaining({ time: "9:00 AM" })] });
+  });
+
+  it("compares the requested local hour rather than a shared UTC timestamp", () => {
+    const prompt = "Which city is warmer at 8 AM local tomorrow: Raleigh or London?";
+    const retrieval = weatherTrendRetrieval(
+      ["Raleigh, NC", "London, England"],
+      ["2026-08-03", "2026-08-04"],
+    );
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations[0].current.timeZone = "America/New_York";
+    result.locations[1].current.timeZone = "Europe/London";
+    result.locations.forEach((location, locationIndex) => {
+      location.hourly = Array.from({ length: 48 }, (_, index) => ({
+        ...structuredClone(raleighWeather.hourly[index % raleighWeather.hourly.length]),
+        startTime: new Date(Date.parse("2026-08-02T14:00:00.000Z") + index * 3_600_000).toISOString(),
+        endTime: new Date(Date.parse("2026-08-02T15:00:00.000Z") + index * 3_600_000).toISOString(),
+        temperature: locationIndex === 0 && index === 22
+          ? 90
+          : locationIndex === 1 && index === 17
+            ? 60
+            : 70,
+      }));
+    });
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "comparison",
+      prompt,
+      retrieval,
+      clientContext,
+    });
+
+    expect(plan).toMatchObject({ recipeId: "comparison.verdict" });
+    expect(plan.modules.find((module) => module.type === "summary")).toMatchObject({
+      recommendedLocationIndex: 0,
+    });
+    expect(plan.modules.find((module) => module.type === "table")).toMatchObject({
+      forecastKind: "hourly",
+      forecastIndexes: [22],
+      metric: "temperature",
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+    const spec = compileSurfacePlan({ plan, retrieval, clientContext, prompt });
+    expect(spec.components.find((node) => node.component === "ComparisonSummary")).toMatchObject({
+      items: [
+        expect.objectContaining({ label: "Raleigh, NC", value: "90°F", recommended: true }),
+        expect.objectContaining({ label: "London, England", value: "60°F", recommended: false }),
+      ],
+    });
+    expect(spec.components.find((node) => node.component === "ComparisonTable")).toMatchObject({
+      rows: [["8:00 AM local", "90°F", "60°F"]],
+    });
+  });
+
+  it("routes every retrieved current-weather location through the compact comparison fallback", () => {
+    const prompt = "Show current weather in Raleigh and Charlotte.";
+    const retrieval = weatherTrendRetrieval(
+      ["Raleigh, NC", "Charlotte, NC"],
+      ["2026-08-03", "2026-08-04"],
+    );
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval,
+      clientContext,
+    });
+
+    expect(plan).toMatchObject({ kind: "comparison", recipeId: "comparison.verdict" });
+    expect(plan.modules.find((module) => module.type === "table")).toMatchObject({
+      locationIndexes: [0, 1],
+      forecastKind: "current",
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+
+    const spec = compileSurfacePlan({ plan, retrieval, clientContext, prompt });
+    expect(spec.components.find((node) => node.component === "ComparisonTable")).toMatchObject({
+      columns: ["Metric", "Raleigh, NC", "Charlotte, NC"],
+    });
+    expect(evaluateSurfacePlanQuality(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    }, spec)).toEqual(expect.objectContaining({
+      requested_coverage: true,
+      content_budget: true,
+    }));
+  });
+
+  it("keeps the deterministic single-location snapshot within every production quality gate", () => {
+    const prompt = "What is the weather in Raleigh right now?";
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval: weatherRetrieval,
+      clientContext,
+    });
+    const spec = compileSurfacePlan({ plan, retrieval: weatherRetrieval, clientContext, prompt });
+
+    expect(Object.values(evaluateSurfacePlanQuality(plan, {
+      sources: weatherRetrieval.sources,
+      evidence: weatherRetrieval.evidence,
+      prompt,
+      clientContext,
+    }, spec))).toEqual(Array(8).fill(true));
+  });
+
+  it.each([
+    ["driest", 0],
+    ["warmest", 4],
+    ["coolest", 0],
+  ] as const)("preserves an explicit %s-day fallback recommendation", (signal, expectedIndex) => {
+    const prompt = `Show Raleigh's five-day outlook and call out the ${signal} day.`;
+    const retrieval = structuredClone(weatherRetrieval);
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    result.locations[0].daily = Array.from({ length: 5 }, (_, index) => ({
+      ...structuredClone(raleighWeather.daily[index % raleighWeather.daily.length]),
+      date: `2026-08-${String(index + 3).padStart(2, "0")}`,
+      high: 80 + index,
+      low: 60 + index,
+      precipitationProbability: 10 + index,
+    }));
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval,
+      clientContext,
+    });
+
+    expect(plan.modules.find((module) => module.type === "recommendation")).toMatchObject({
+      dayIndex: expectedIndex,
+      signal,
+    });
+  });
+
+  it("rejects an outlook that omits an explicitly requested extreme-day recommendation", () => {
+    const prompt = "Show Raleigh's two-day outlook and call out the driest day.";
+    const plan = structuredClone(plansByRecipe["weather.outlook"]);
+
+    const result = validateSurfacePlan(plan, {
+      sources: weatherRetrieval.sources,
+      evidence: weatherRetrieval.evidence,
+      prompt,
+      clientContext,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.join(" ")).toMatch(/driest-day recommendation/i);
+  });
+
+  it("includes a requested severe alert in the snapshot fallback", () => {
+    const prompt = "Are there severe weather alerts in Raleigh right now?";
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval: weatherRetrieval,
+      clientContext,
+    });
+
+    expect(plan).toMatchObject({ recipeId: "weather.snapshot" });
+    expect(plan.modules.find((module) => module.type === "alerts")).toMatchObject({
+      locationIndex: 0,
+      alertIndexes: [0],
+    });
+    const spec = compileSurfacePlan({ plan, retrieval: weatherRetrieval, clientContext, prompt });
+    expect(evaluateSurfacePlanQuality(plan, {
+      sources: weatherRetrieval.sources,
+      evidence: weatherRetrieval.evidence,
+      prompt,
+      clientContext,
+    }, spec).content_budget).toBe(true);
+  });
+
+  it("includes requested alerts after an outlook without breaking semantic order", () => {
+    const prompt = "Show Raleigh's two-day outlook and any weather alerts.";
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "weather",
+      prompt,
+      retrieval: weatherRetrieval,
+      clientContext,
+    });
+
+    expect(plan.modules.map((module) => module.type)).toEqual([
+      "hero",
+      "daily",
+      "alerts",
+      "sources",
+    ]);
+    expect(validateSurfacePlan(plan, {
+      sources: weatherRetrieval.sources,
+      evidence: weatherRetrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+  });
+
+  it.each([
+    [
+      "Which has better weather for a Saturday picnic: Raleigh or Asheville?",
+      ["Raleigh, NC", "Asheville, NC"],
+      ["2026-08-08"],
+      "comparison.verdict",
+    ],
+    [
+      "Score Raleigh, Durham, Charlotte, and Asheville for a Sunday outdoor brunch.",
+      ["Raleigh, NC", "Durham, NC", "Charlotte, NC", "Asheville, NC"],
+      ["2026-08-09"],
+      "comparison.scorecard",
+    ],
+  ] as const)("preserves named-day evidence in fallback: %s", (prompt, names, dates, recipeId) => {
+    const retrieval = weatherTrendRetrieval(names, dates);
+
+    const plan = buildFallbackSurfacePlan({ kind: "comparison", prompt, retrieval, clientContext });
+
+    expect(plan).toMatchObject({ recipeId });
+    expect(plan.modules.find((module) => module.type === "table")).toMatchObject({
+      forecastKind: "daily",
+      forecastIndexes: [0],
+      metric: "precipitation",
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+  });
+
+  it("recognizes the exact QC06 chart request and preserves all five days in trend fallback", () => {
+    const prompt = "Chart the next five days of highs for Miami, Denver, and Seattle.";
+    const retrieval = weatherTrendRetrieval(
+      ["Miami, FL", "Denver, CO", "Seattle, WA"],
+      ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"],
+    );
+
+    const plan = buildFallbackSurfacePlan({
+      kind: "comparison",
+      prompt,
+      retrieval,
+      clientContext,
+    });
+    const chart = plan.modules.find((module) => module.type === "chart");
+    const table = plan.modules.find((module) => module.type === "table");
+
+    expect(plan).toMatchObject({ kind: "comparison", recipeId: "comparison.trend" });
+    expect(chart).toMatchObject({
+      type: "chart",
+      forecastKind: "daily",
+      forecastIndexes: [0, 1, 2, 3, 4],
+      metric: "high",
+    });
+    expect(table).toMatchObject({
+      type: "table",
+      forecastKind: "daily",
+      forecastIndexes: [0, 1, 2, 3, 4],
+      metric: "high",
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+    expect(() => compileSurfacePlan({ plan, retrieval, clientContext, prompt })).not.toThrow();
+  });
+
+  it("preserves an hourly range in a weather-comparison trend fallback", () => {
+    const prompt = "Chart the next three hours of temperature for Raleigh and Charlotte.";
+    const retrieval = weatherTrendRetrieval(
+      ["Raleigh, NC", "Charlotte, NC"],
+      ["2026-08-03", "2026-08-04"],
+    );
+
+    const plan = buildFallbackSurfacePlan({ kind: "comparison", prompt, retrieval, clientContext });
+
+    expect(plan).toMatchObject({ recipeId: "comparison.trend" });
+    expect(plan.modules.find((module) => module.type === "chart")).toMatchObject({
+      forecastKind: "hourly",
+      forecastIndexes: [0, 1, 2],
+      metric: "temperature",
+    });
+    expect(plan.modules.find((module) => module.type === "table")).toMatchObject({
+      forecastKind: "hourly",
+      forecastIndexes: [0, 1, 2],
+      metric: "temperature",
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: retrieval.sources,
+      evidence: retrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+  });
+
+  it("compiles the full supported 24-hour weather-comparison range", () => {
+    const prompt = "Chart the next 24 hours of temperature for Raleigh and Charlotte.";
+    const retrieval = weatherTrendRetrieval(
+      ["Raleigh, NC", "Charlotte, NC"],
+      ["2026-08-03", "2026-08-04"],
+    );
+    const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
+    for (const location of result.locations) {
+      location.hourly = Array.from({ length: 24 }, (_, index) => ({
+        ...structuredClone(raleighWeather.hourly[index % raleighWeather.hourly.length]),
+        startTime: new Date(Date.parse("2026-08-02T14:00:00.000Z") + index * 3_600_000).toISOString(),
+      }));
+    }
+
+    const plan = buildFallbackSurfacePlan({ kind: "comparison", prompt, retrieval, clientContext });
+
+    expect(plan.modules.find((module) => module.type === "chart")).toMatchObject({
+      forecastIndexes: Array.from({ length: 24 }, (_, index) => index),
+    });
+    expect(() => compileSurfacePlan({ plan, retrieval, clientContext, prompt })).not.toThrow();
+  });
+
+  it("refuses to compile a fallback that drops a requested word-number range", () => {
+    const prompt = "Chart the next five days of highs for Miami, Denver, and Seattle.";
+    const retrieval = weatherTrendRetrieval(
+      ["Miami, FL", "Denver, CO", "Seattle, WA"],
+      ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"],
+    );
+    const complete = buildFallbackSurfacePlan({
+      kind: "comparison",
+      prompt,
+      retrieval,
+      clientContext,
+    });
+    const incomplete = structuredClone(complete);
+    for (const module of incomplete.modules) {
+      if ((module.type === "chart" || module.type === "table") && "locationIndexes" in module) {
+        module.forecastIndexes = [0, 1];
+      }
+    }
+
+    expect(() =>
+      compileSurfacePlan({ plan: incomplete, retrieval, clientContext, prompt })
+    ).toThrow(/(?:5|five)-day range.*not fully covered/i);
+  });
+
   it("never copies a generated weather-comparison claim into the deterministic fallback", () => {
     const retrieval = structuredClone(weatherRetrieval);
     const result = retrieval.evidence[0].result as { locations: Array<typeof raleighWeather> };
@@ -1379,10 +2397,71 @@ describe("domain-specific deterministic SurfacePlan fallbacks", () => {
     );
   });
 
+  it("uses a scorecard fallback for a scored search-backed comparison", () => {
+    const prompt = "Score React and Angular on renderer and support.";
+    const plan = buildFallbackSurfacePlan({
+      kind: "comparison",
+      prompt,
+      retrieval: comparisonRetrieval,
+      clientContext,
+    });
+
+    expect(plan).toMatchObject({
+      recipeId: "comparison.scorecard",
+      emphasis: "answer",
+    });
+    expect(plan.modules.map((module) => module.type)).toEqual(["summary", "table", "sources"]);
+    expect(plan.modules.find((module) => module.type === "summary")).toMatchObject({
+      title: "React and Angular scorecard",
+      items: [{ label: "React" }, { label: "Angular" }],
+    });
+    expect(plan.modules.find((module) => module.type === "table")).toMatchObject({
+      caption: "Requested criteria without invented scores",
+      columns: ["Criterion", "React", "Angular"],
+      rows: [
+        ["renderer", "Not deterministically scored", "Not deterministically scored"],
+        ["support", "Not deterministically scored", "Not deterministically scored"],
+      ],
+    });
+    expect(validateSurfacePlan(plan, {
+      sources: comparisonRetrieval.sources,
+      evidence: comparisonRetrieval.evidence,
+      prompt,
+      clientContext,
+    })).toMatchObject({ success: true });
+  });
+
+  it("does not present retrieval access time as a researched event date", () => {
+    const plan = buildFallbackSurfacePlan({
+      kind: "research",
+      prompt: "Show the release timeline.",
+      retrieval: researchRetrieval,
+      clientContext,
+    });
+    const timeline = plan.modules.find((module) => module.type === "timeline");
+
+    expect(timeline && "items" in timeline ? timeline.items.map((item) => item.date) : []).toEqual([
+      "Date not established",
+      "Date not established",
+    ]);
+    expect(JSON.stringify(timeline)).not.toContain(searchSources[0].accessedAt.slice(0, 10));
+  });
+
+  it("fails closed instead of manufacturing opposing stances in a claims fallback", () => {
+    expect(() =>
+      buildFallbackSurfacePlan({
+        kind: "research",
+        prompt: "What evidence supports and challenges this claim?",
+        retrieval: researchRetrieval,
+        clientContext,
+      })
+    ).toThrow(/supporting evidence.*challenging evidence/i);
+  });
+
   it.each([
     ["weather", "weather.snapshot", "WeatherHero"],
     ["comparison", "comparison.verdict", "ComparisonSummary"],
-    ["research", "research.brief", "ResearchLead"],
+    ["research", "research.timeline", "ResearchLead"],
   ] as const)(
     "uses the %s fallback recipe instead of collapsing to generic narrative prose",
     (kind, recipeId, expectedPrimaryComponent) => {

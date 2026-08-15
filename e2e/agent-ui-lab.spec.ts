@@ -118,7 +118,7 @@ test.describe("recorded suggestion surfaces", () => {
     await expect(page.getByRole("region", { name: "Weather for Raleigh, NC" })).toBeVisible();
     await expect(page.getByText("Best walk window", { exact: true })).toBeVisible();
     await expect(page.getByText("7:30–8:30 PM", { exact: true })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Hourly" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Hourly", exact: true })).toBeVisible();
     await expect(
       page.getByRole("region", { name: "5-day outlook", exact: true }),
     ).toBeVisible();

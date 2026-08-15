@@ -22,7 +22,7 @@ export const ComparisonSummary = createComponentImplementation(
     >
       <div className="a2ui-comparison-summary__lead">
         <p className="a2ui-eyebrow">Comparison</p>
-        <h3>{props.title}</h3>
+        <h2>{props.title}</h2>
         <p>{props.recommendation}</p>
       </div>
       <ul className="a2ui-comparison-summary__items">
@@ -113,13 +113,22 @@ export const ComparisonChart = createComponentImplementation(
     const variant = props.variant ?? "line";
     const labels = props.labels as string[];
     const allValues = props.series.flatMap((series) => series.values);
-    const minimum = Math.min(...allValues);
-    const maximum = Math.max(...allValues);
+    const dataMinimum = Math.min(...allValues);
+    const dataMaximum = Math.max(...allValues);
+    const minimum = variant === "bar" ? Math.min(0, dataMinimum) : dataMinimum;
+    const maximumCandidate = variant === "bar" ? Math.max(0, dataMaximum) : dataMaximum;
+    const maximum = variant === "bar" && maximumCandidate === minimum
+      ? minimum + 1
+      : maximumCandidate;
     const plotWidth = chartWidth - chartInset.left - chartInset.right;
     const plotHeight = chartHeight - chartInset.top - chartInset.bottom;
     const valueSpan = maximum - minimum || 1;
     const groupWidth = plotWidth / labels.length;
     const barWidth = Math.max(3, (groupWidth * 0.72) / props.series.length);
+    const yForValue = (value: number) =>
+      chartInset.top + ((maximum - value) / valueSpan) * plotHeight;
+    const zeroBaselineY = yForValue(0);
+    const barTicks = [...new Set([maximum, 0, minimum])];
 
     return (
       <figure
@@ -133,10 +142,14 @@ export const ComparisonChart = createComponentImplementation(
             role="img"
             aria-label={props.title}
             preserveAspectRatio="xMidYMid meet"
+            data-domain-min={minimum}
+            data-domain-max={maximum}
           >
             <desc>
-              {variant === "bar" ? "Bar" : "Line"} chart. The complete values are
-              available in the table immediately below.
+              {variant === "bar"
+                ? "Bar chart with a labeled zero baseline."
+                : "Line chart."}{" "}
+              The complete values are available in the table immediately below.
             </desc>
             {[0, 1, 2, 3, 4].map((line) => {
               const y = chartInset.top + (line / 4) * (chartHeight - chartInset.top - chartInset.bottom);
@@ -151,17 +164,43 @@ export const ComparisonChart = createComponentImplementation(
                 />
               );
             })}
+            {variant === "bar" ? (
+              <>
+                <line
+                  className="a2ui-chart__baseline"
+                  data-value="0"
+                  x1={chartInset.left}
+                  x2={chartWidth - chartInset.right}
+                  y1={zeroBaselineY}
+                  y2={zeroBaselineY}
+                />
+                {barTicks.map((tick) => (
+                  <text
+                    className={joinClassNames(
+                      "a2ui-chart__tick",
+                      tick === 0 && "a2ui-chart__tick--zero",
+                    )}
+                    key={tick}
+                    x={chartInset.left - 8}
+                    y={yForValue(tick) + 4}
+                    textAnchor="end"
+                  >
+                    {Number.isInteger(tick) ? tick : Number(tick.toFixed(2))}
+                  </text>
+                ))}
+              </>
+            ) : null}
             {variant === "bar"
               ? props.series.flatMap((series, seriesIndex) =>
                   series.values.map((value, valueIndex) => {
-                    const normalized = (value - minimum) / valueSpan;
-                    const height = Math.max(2, normalized * plotHeight);
+                    const valueY = yForValue(value);
+                    const height = Math.abs(zeroBaselineY - valueY);
                     const groupStart = chartInset.left + valueIndex * groupWidth;
                     const x =
                       groupStart +
                       groupWidth * 0.14 +
                       seriesIndex * barWidth;
-                    const y = chartHeight - chartInset.bottom - height;
+                    const y = Math.min(valueY, zeroBaselineY);
                     return (
                       <rect
                         key={`${series.label}-${valueIndex}`}

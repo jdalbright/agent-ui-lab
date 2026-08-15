@@ -8,13 +8,13 @@ The first-class surfaces cover weather, comparisons, and grounded current resear
 
 - React 19, Vite, TypeScript, and Vercel Functions
 - Gemini `gemini-3.6-flash` through the stable `v1` Interactions API with `store: false`
-- A2UI v0.9.1 messages rendered through local adapters and a 21-component React catalog
+- A2UI v0.9.1 messages rendered through local adapters and versioned trusted React catalogs
 - Stateless function-call continuation with Google Search grounding and normalized Google Weather data
-- Agent-selected, server-compiled presentation recipes for weather, comparison, and research answers
+- Agent-selected recipes plus an opt-in, server-validated generative composition grammar for weather, comparison, and research answers
 - Responsive `compact`, `medium`, and `expanded` surfaces with an accessible trace inspector
 - Validation, source provenance, safe fallback behavior, short-lived context, and anonymous rate limiting
 
-See [Architecture](docs/architecture.md) for the complete request path and trust boundaries.
+See [Architecture](docs/architecture.md) for the complete request path and trust boundaries, and [Generative UI Grammar v3](docs/generative-ui-grammar-v3.md) for the freer composition contract.
 
 ## Quick start
 
@@ -48,7 +48,8 @@ npm run dev:full
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | Production rate limit | Managed-name alternative supplied by Vercel's Upstash integration. |
 | `ALLOWED_ORIGINS` | Production | Comma-separated exact origins accepted by `/api/agent`; production must include `https://lab.jalbright.dev`. Vercel's current preview origin is also accepted automatically. |
 | `ALLOW_DEMO_FIXTURES` | Development only | Set to `true` only when recorded server fixtures should be allowed without live provider keys. Leave false or unset in production. |
-| `SURFACE_COMPOSER_VERSION` | No | `spec-v1` (default) keeps the original schema-to-surface path. Use `plan-v2` on a preview to exercise agent-selected recipes, and enable it in production only after preview acceptance. |
+| `SURFACE_COMPOSER_VERSION` | No | `spec-v1` keeps the original path, `plan-v2` uses validated recipes, and `grammar-v3` uses the constrained composition grammar for supported domains. |
+| `SURFACE_GRAMMAR_V3_ROLLOUT_PERCENT` | Grammar v3 | Stable grammar-v3 allocation from `0` through `100`. Defaults to `100` only when `grammar-v3` is selected; use 10, 50, and 100 for a staged ramp. |
 
 `VERCEL_ENV`, `VERCEL_URL`, and `VERCEL_PROJECT_ID` are supplied by Vercel and should not be copied into local configuration unless a specific test requires them.
 
@@ -66,22 +67,24 @@ npm run dev:full
 | `npm run test:coverage` | Run tests with V8 coverage reports. |
 | `npm run test:e2e` | Run Playwright against desktop and mobile projects. |
 | `npm run eval` | Run the 40-prompt contract evaluation set. |
-| `npm run eval:ui` | Validate and compile 18 recorded plan/evidence cases, build the app, then compare 36 Chromium reference screenshots with axe and overflow checks. |
+| `npm run eval:ui` | Validate recorded plan-v2 and grammar-v3 cases, build the app, then compare 51 Chromium reference screenshots with axe and overflow checks. |
 | `npm run eval:ui:live` | Opt in to three live Gemini composition samples per recorded-evidence case (54 total); a Gemini key is required to run the samples. |
+| `npm run eval:ui:live:v3` | Run the separate 54-sample grammar-v3 shadow gate against recorded evidence; no output is rendered to users. |
 
-Provider tests use recorded Gemini Search, Geocoding, and Weather fixtures. They do not require live credentials. `eval:ui:live` calls only the composition stage: retrieval evidence stays recorded while Gemini selects a plan that is validated, compiled, and scored by the deterministic quality linter. Without `GEMINI_API_KEY`, its guarded test confirms that live sampling is disabled. Live-provider smoke checks are intentionally separate from the default test suite.
+Provider tests use recorded Gemini Search, Geocoding, and Weather fixtures. They do not require live credentials. `eval:ui:live` calls only the composition stage: retrieval evidence stays recorded while Gemini selects a plan that is validated, compiled, scored by the deterministic quality linter, and checked against each case's explicit ordered-component and semantic-variant contract. Its bounded per-case diagnostics report quality validity separately from structural conformance. Without `GEMINI_API_KEY`, its guarded test confirms that live sampling is disabled. Live-provider smoke checks are intentionally separate from the default test suite.
 
 ## Weather retrieval coverage
 
-One weather tool call can resolve one to four named locations in request order, or one browser-approved coordinate pair. Retrieval accepts 1–240 hourly records and 1–10 daily records; defaults are 24 hours and seven days. Weather surfaces can present up to 24 hourly or 10 daily entries, and weather-comparison tables/charts can present up to 12 forecast points. Longer hourly retrieval supports future activity targets rather than a 240-row UI. The aggregate four-location and two-tool-round limits still apply if Gemini makes more than one call.
+One weather tool call can resolve one to four named locations in request order, or one browser-approved coordinate pair. Retrieval accepts 1–240 hourly records and 1–10 daily records; defaults are 24 hours and seven days. Weather and weather-comparison surfaces can present up to 24 hourly or 10 daily entries. Longer hourly retrieval supports future activity targets rather than a 240-row UI. The aggregate four-location and two-tool-round limits still apply if Gemini makes more than one call.
 
 Activity requests retain a bounded activity label, a whole-hour duration from one to six hours, and an optional local start time/day offset. Server code retrieves enough hourly evidence and scores the best or explicitly requested window for each location. Gemini can select those records but cannot calculate or replace their measurements.
 
 ## Trusted rendering model
 
-Gemini returns semantic data, not executable presentation code. With the Phase 2 composer enabled, the model selects a validated `SurfacePlan`: a recipe, density, emphasis, ordered modules, and grounded copy. Server-owned code resolves every evidence reference and deterministically compiles `SurfacePlan → SurfaceSpec → A2UI v0.9.1`. The browser still receives only the three official messages: `createSurface`, `updateDataModel`, and `updateComponents`.
+Gemini returns semantic data, not executable presentation code. Plan v2 selects a validated recipe and modules. Grammar v3 instead selects evidence-backed content plus a bounded adjacency-list layout made from semantic primitives. Weather planning uses a qualitative, index-preserving manifest; raw measurements, coordinates, provider steps, and source URLs stay server-side. Server-owned code resolves evidence references and deterministically compiles either plan into `SurfaceSpec → A2UI v0.9.1`. The browser still receives only `createSurface`, `updateDataModel`, and `updateComponents`.
 
 - Layout and content: `SurfaceFrame`, `EditorialHeading`, `TextBlock`, `Metric`, `Band`, `Split`, `Rail`, `Divider`
+- Grammar-v3 layout: `Stack`, `Grid`, `Section`, `Card`, `Tabs`, `Disclosure` plus the trusted shared layout primitives
 - Weather: `WeatherHero`, `RecommendationBand`, `HourlyForecast`, `DailyForecast`, `WeatherAlert`, `LocationPrompt`
 - Comparison: `ComparisonSummary`, `ComparisonTable`, `ComparisonChart`
 - Research: `ResearchLead`, `EvidenceList`, `Timeline`, `SourceList`

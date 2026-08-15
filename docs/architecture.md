@@ -20,13 +20,19 @@ flowchart LR
     G --> V{"SURFACE_COMPOSER_VERSION"}
     V -->|"spec-v1 default"| S["emit_surface_spec and SurfaceSpec validation"]
     V -->|"plan-v2"| H["emit_surface_plan, no retrieval tools"]
+    V -->|"grammar-v3"| N["emit_generative_surface_plan, no retrieval tools"]
     H --> I["SurfacePlan schema, evidence, source, and quality validation"]
+    N --> O["Content plus layout graph invariant validation"]
+    O -->|"one replacement repair allowed"| N
+    O --> P["Trusted grammar-v3 compiler"]
+    O -->|"second failure"| L
     I -->|"one replacement repair allowed"| H
     I --> K["Deterministic SurfacePlan to SurfaceSpec compiler"]
     I -->|"second failure"| L["Domain-specific deterministic plan"]
     L --> K
     S --> J["SurfaceSpec to A2UI v0.9.1 compiler"]
     K --> J
+    P --> J
     J -->|"NDJSON status, trace, A2UI, context, done"| A
     A --> M["Trusted React catalog"]
 ```
@@ -54,7 +60,7 @@ Custom function arguments are schema-validated. Stateless continuation appends e
 
 Weather retrieval accepts one legacy location, an ordered list of one to four named locations, or one coordinate pair that matches coordinates explicitly approved by the browser. Named places are de-duplicated, geocoded in request order, and fetched as one bounded bundle. Across all function calls, a request may cover no more than four weather locations and two custom-tool rounds.
 
-Each location returns current conditions, public alerts, and the requested retrieval range. Hourly retrieval supports 1–240 records and daily retrieval supports 1–10; defaults are 24 hourly records and seven daily records. A Weather surface can reference up to 24 hourly or 10 daily entries, while weather-comparison tables/charts can reference up to 12 forecast points. Longer hourly retrieval exists for future activity targets, not a 240-row presentation. Validation checks supported requested display ranges for every evidence-backed location instead of silently truncating them.
+Each location returns current conditions, public alerts, and the requested retrieval range. Hourly retrieval supports 1–240 records and daily retrieval supports 1–10; defaults are 24 hourly records and seven daily records. Weather and weather-comparison surfaces can reference up to 24 hourly or 10 daily entries. Longer hourly retrieval exists for future activity targets, not a 240-row presentation. Validation checks supported requested display ranges for every evidence-backed location instead of silently truncating them.
 
 Activity retrieval preserves an activity label, a whole-hour duration from one through six, and—when supplied—a local `HH:MM` start and day offset from zero through nine. The server expands the hourly request when needed and deterministically scores the best or specifically requested window for each location, including weather-alert and incomplete-safety-data penalties. The model may reference a scored window but does not calculate it.
 
@@ -64,7 +70,7 @@ Google Search citations and weather attribution are converted to `SourceRecord` 
 
 ### 4. Composition and recipe selection
 
-A separate Gemini interaction receives the user request, semantic client context, evidence summary, normalized weather evidence, and source records. It has no retrieval or action tools. When `plan-v2` is selected, its only available function is the declarative `emit_surface_plan` schema adapter. The returned `SurfacePlan` discriminated union contains `kind`, `recipeId`, `density`, `emphasis`, and ordered capability-specific modules.
+A separate Gemini interaction receives the user request, semantic client context, and a composition-only evidence projection. Search-backed plans receive bounded source IDs, titles, providers, and snippets without URLs. Weather-backed plans receive an index-preserving qualitative manifest—conditions, ranges, alerts, activity windows, extrema, and aligned comparison rankings—without coordinates, provider steps, source URLs, or raw measurements. It has no retrieval or action tools. When `plan-v2` is selected, its only available function is the declarative `emit_surface_plan` schema adapter. The returned `SurfacePlan` discriminated union contains `kind`, `recipeId`, `density`, `emphasis`, and ordered capability-specific modules.
 
 The planner chooses from nine bounded recipes:
 
@@ -88,7 +94,7 @@ Source validation is closed over server evidence. A plan has exactly one final S
 
 The validator checks recipe-to-kind fit, module compatibility and order, evidence references, requested location/unit/range/activity coverage, source closure, chart/table alignment, and content budgets. The schema caps a plan at 16 modules; quality validation lowers the effective limit to 6, 9, or 12 modules for `brief`, `balanced`, or `detailed`, and estimates the compiled graph against the 60-node catalog limit. SurfaceSpec validation independently retains the 60-node and six-level graph limits.
 
-One complete replacement repair is allowed for schema, semantic, quality, evidence, source, or compilation failure. If the replacement also fails, server code builds a deterministic Weather Snapshot, Comparison Verdict, or Research Brief from available trusted evidence and compiles it through the same validator. If the evidence needed by that domain fallback is unavailable, the outer request pipeline returns the bounded narrative fallback instead.
+One complete replacement repair is allowed for schema, semantic, quality, evidence, source, or compilation failure. If the replacement also fails, server code chooses an intent-specific deterministic recipe from the original request, preserves requested ranges and locations, validates it with the same prompt and client context, and compiles it from trusted evidence. If the evidence needed by that domain fallback is unavailable, the outer request pipeline returns the bounded narrative fallback instead.
 
 The feature flag preserves the original path during rollout:
 
@@ -96,8 +102,9 @@ The feature flag preserves the original path during rollout:
 | --- | --- |
 | unset or `spec-v1` | Default. Gemini calls `emit_surface_spec`, followed by the existing SurfaceSpec validation and A2UI compiler. |
 | `plan-v2` | Weather, Comparison, and Research call `emit_surface_plan`, then use deterministic `SurfacePlan → SurfaceSpec → A2UI` compilation. Other bounded paths remain on `spec-v1`. |
+| `grammar-v3` | Supported domains call `emit_generative_surface_plan`. The server separately validates evidence-backed content and a semantic layout graph, then compiles with `editorial/v3`. A second invalid output uses the validated plan-v2 deterministic fallback. |
 
-An unknown flag value fails runtime configuration validation. Preview acceptance precedes production enablement, and setting production back to `spec-v1` is the immediate rollback.
+An unknown flag value fails runtime configuration validation. `SURFACE_GRAMMAR_V3_ROLLOUT_PERCENT` accepts only integers from 0 through 100 and uses stable request hashing to route grammar-v3 misses to plan v2. Preview acceptance precedes production enablement. Plan v2 is the immediate grammar-v3 rollback; spec v1 remains available for the older composer rollback.
 
 Independent SurfaceSpec and graph validation still reject:
 
@@ -111,7 +118,9 @@ A provider or rendering failure produces a stable error and, when possible, a de
 
 ### 5. Trusted visual grammar and A2UI rendering
 
-The custom catalog ID is `https://lab.jalbright.dev/catalogs/editorial/v2`; the wire protocol remains A2UI v0.9.1. Every Phase 2 graph begins with `SurfaceFrame`, whose `recipeId`, `density`, and `emphasis` props are closed enums. The compiler may combine trusted `Split`, `Rail`, `Metric`, heading, divider, and band primitives, but it cannot introduce component names or style strings.
+The trusted catalog IDs are `https://lab.jalbright.dev/catalogs/editorial/v2` for recipe surfaces and `https://lab.jalbright.dev/catalogs/editorial/v3` for generative grammar surfaces; the wire protocol remains A2UI v0.9.1. Every graph begins with `SurfaceFrame`. Plan v2 carries closed recipe metadata. Grammar v3 carries `compositionMode`, density, emphasis, and optional advisory archetype metadata, then combines only `Stack`, `Grid`, `Split`, `Section`, `Card`, `Rail`, `Tabs`, `Disclosure`, and `Divider` semantic layout primitives. Neither compiler accepts arbitrary component names, style strings, generated code, or actions.
+
+Grammar-v3 tabs and disclosures use application-owned local React state and accessible semantics. The validator keeps the primary answer, critical alerts, and sources out of interactive containers, rejects nested interactions, and appends the single SourceList as the final logical child. CSS and container queries own every breakpoint, size, color, and responsive decision. See [Generative UI Grammar v3](generative-ui-grammar-v3.md) for its graph, budget, evaluation, and rollback contracts.
 
 Semantic presentation variants are also closed enums:
 
@@ -151,9 +160,9 @@ Safe presentation trace metadata is restricted to approved recipe, density, emph
 
 The existing 40-prompt evaluation remains the hard safety contract. The additional 18 recorded-evidence cases—two per recipe—are compiler-backed: each recorded SurfacePlan is validated against its recorded retrieval evidence, compiled by the production `compileSurfacePlan`, validated as a SurfaceSpec, and checked by the deterministic quality linter. The cases assert required facts, recipe fit, defining modules, ordering, density, requested location/range coverage, chart/table alignment, source closure, and content budgets.
 
-`npm run eval:ui` runs the semantic/linter and compiler-backed fixture suites plus live-runner unit tests, builds the production app, and then runs the nine recipe prompts in desktop Chromium at 320, 390, 768, and 1440 pixels. Those 36 browser cases compare checked-in screenshots, emulate reduced motion, reject document overflow, and run axe with no serious or critical findings.
+`npm run eval:ui` runs the semantic/linter and compiler-backed fixture suites plus live-runner unit tests, builds the production app, and then runs the nine recipe prompts in desktop Chromium at 320, 390, 768, and 1440 pixels. It also runs representative grammar-v3 weather, comparison, and research compositions at 320, 390, 768, 1024, and 1440 pixels. The browser gate contains 51 checked-in screenshot comparisons plus two reduced-motion contracts and one focused containment contract. The screenshot cases also reject document overflow and run axe with no serious or critical findings.
 
-`npm run eval:ui:live` sets the explicit live-evaluation guard and asks Gemini to compose each of the 18 cases three times against the same recorded retrieval evidence. Each of the 54 outputs is validated and compiled by production code, then reported with first-pass validity, repair/fallback status, latency, recipe selection, and a structural fingerprint. The test requires at least 95% first-pass validity, zero domain fallbacks, all samples valid, and coverage of all nine recipes. It runs no live Search, Geocoding, or Weather request. Without `GEMINI_API_KEY`, the guarded test stays disabled.
+`npm run eval:ui:live` sets the explicit live-evaluation guard and asks Gemini to compose each of the 18 cases three times against the same recorded retrieval evidence. Each of the 54 outputs is validated and compiled by production code, then reported with separate quality-valid and structural-conformance results, repair/fallback status, latency, recipe selection, and a diagnostic structural fingerprint. Structural acceptance uses each case's explicit required component order and declared semantic-variant requirements or allowances; incidental optional modules in a recorded fixture are not treated as the only valid composition. Presentation-only alternatives such as forecast cards versus tables, research feature versus brief leads, or evidence stacks versus grids stay allowed unless the prompt declares a semantic presentation requirement, such as explicit evidence for and against a claim. The logger emits one bounded summary record and one bounded record per case so deployment log-line limits cannot hide later cases. The test requires at least 95% first-pass quality validity, zero domain fallbacks, every sample quality-valid and structurally conformant, and coverage of all nine recipes. It runs no live Search, Geocoding, or Weather request. Without `GEMINI_API_KEY`, the guarded test stays disabled.
 
 Checked-in screenshots are regression references, not proof of subjective quality. Before `plan-v2` can replace the production default, a human must inspect the live Vercel preview at the same four widths and approve every recipe for relevance, hierarchy, scanability, and visual balance. No approval score or live reliability metric should be published until it is observed and recorded.
 

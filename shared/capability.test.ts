@@ -108,6 +108,49 @@ describe("classifyCapability", () => {
     });
   });
 
+  it("routes multi-location weather charts as comparisons without reclassifying one-location charts", () => {
+    expect(
+      classifyCapability("Chart the next five days of highs for Miami, Denver, and Seattle."),
+    ).toMatchObject({
+      route: "weather",
+      toolPolicy: "weather",
+      surfaceKind: "comparison",
+      reason: "weather-comparison",
+    });
+    expect(classifyCapability("Chart the next five days of highs for Miami.")).toMatchObject({
+      route: "weather",
+      toolPolicy: "weather",
+      surfaceKind: "weather",
+      reason: "weather-request",
+    });
+  });
+
+  it.each([
+    "Plot highs for Raleigh and Durham.",
+    "Chart lows for Raleigh, Durham, and Charlotte.",
+    "Graph conditions for Miami and Denver.",
+  ])("routes a no-range multi-location weather chart as a weather comparison: %s", (prompt) => {
+    expect(classifyCapability(prompt)).toMatchObject({
+      route: "weather",
+      toolPolicy: "weather",
+      surfaceKind: "comparison",
+      reason: "weather-comparison",
+    });
+  });
+
+  it.each([
+    "Plot revenue for Raleigh and Durham.",
+    "Chart conversion rates for Raleigh, Durham, and Charlotte.",
+    "Graph enrollment for Miami and Denver.",
+  ])("does not treat a non-weather multi-location chart as weather: %s", (prompt) => {
+    expect(classifyCapability(prompt)).toMatchObject({
+      route: "plain",
+      toolPolicy: "none",
+      surfaceKind: "narrative",
+      reason: "plain-answer",
+    });
+  });
+
   it.each([
     "Which airline has the better carry-on policy: Southwest or Delta?",
     "Compare React and Angular for an A2UI v0.9.1 client across setup and accessibility.",
@@ -130,6 +173,37 @@ describe("classifyCapability", () => {
       toolPolicy: "search",
       surfaceKind: "research",
       reason: "grounded-research",
+    });
+  });
+
+  it.each([
+    "What changed in Widget 2?",
+    "What has changed in Widget 2?",
+    "What's new in Widget 2?",
+    "What is new in Widget 2?",
+    "What’s different in Widget 2?",
+    "What is different in Widget 2?",
+  ])("routes an affirmative change-summary request through grounded research: %s", (prompt) => {
+    expect(classifyCapability(prompt)).toMatchObject({
+      route: "search",
+      toolPolicy: "search",
+      surfaceKind: "research",
+      reason: "grounded-research",
+    });
+  });
+
+  it("keeps ordinary narrative and weather routing outside change-summary research", () => {
+    expect(classifyCapability("Summarize Widget 2.")).toMatchObject({
+      route: "plain",
+      toolPolicy: "none",
+      surfaceKind: "narrative",
+      reason: "plain-answer",
+    });
+    expect(classifyCapability("What's new in Raleigh weather today?")).toMatchObject({
+      route: "weather",
+      toolPolicy: "weather",
+      surfaceKind: "weather",
+      reason: "weather-request",
     });
   });
 

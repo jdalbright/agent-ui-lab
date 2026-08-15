@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { A2UI_VERSION, CATALOG_ID, LIMITS, TRUSTED_COMPONENT_NAMES } from "./constants.js";
+import { A2UI_VERSION, CATALOG_IDS, LIMITS, TRUSTED_COMPONENT_NAMES } from "./constants.js";
 import { isSafeExternalHttpsUrl } from "./safe-url.js";
 
 const boundedText = (max: number) => z.string().trim().min(1).max(max);
@@ -78,6 +78,7 @@ export const SurfaceEmphasisSchema = z.enum([
   "trend",
   "evidence",
   "risk",
+  "exploration",
 ]);
 
 const nodeBase = {
@@ -91,7 +92,9 @@ export const SurfaceFrameNodeSchema = z
     ...nodeBase,
     component: z.literal("SurfaceFrame"),
     children,
-    recipeId: SurfaceRecipeIdSchema,
+    recipeId: SurfaceRecipeIdSchema.optional(),
+    compositionMode: z.enum(["plan-v2", "grammar-v3"]).optional(),
+    archetypeHint: SurfaceRecipeIdSchema.optional(),
     density: SurfaceDensitySchema,
     emphasis: SurfaceEmphasisSchema,
   })
@@ -163,6 +166,68 @@ export const DividerNodeSchema = z
   })
   .strict();
 
+export const StackNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Stack"),
+    children,
+    gap: z.enum(["compact", "regular", "generous"]),
+    align: z.enum(["start", "center", "stretch"]),
+  })
+  .strict();
+
+export const GridNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Grid"),
+    children,
+    columns: z.enum(["adaptive", "two", "three"]),
+    gap: z.enum(["compact", "regular", "generous"]),
+  })
+  .strict();
+
+export const SectionNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Section"),
+    children,
+    label: z.string().trim().max(80).optional(),
+    role: z.enum(["primary", "supporting", "reference"]),
+    tone: z.enum(["neutral", "accent", "caution"]),
+    prominence: z.enum(["lead", "standard", "quiet"]),
+  })
+  .strict();
+
+export const CardNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Card"),
+    children: z.array(idSchema).min(1).max(8),
+    tone: z.enum(["neutral", "accent", "caution"]),
+    prominence: z.enum(["lead", "standard", "quiet"]),
+  })
+  .strict();
+
+export const TabsNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Tabs"),
+    children: z.array(idSchema).min(2).max(4),
+    labels: z.array(boundedText(40)).min(2).max(4),
+    defaultIndex: z.number().int().min(0).max(3),
+  })
+  .strict();
+
+export const DisclosureNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Disclosure"),
+    children: z.array(idSchema).min(1).max(4),
+    label: boundedText(80),
+    defaultOpen: z.boolean(),
+  })
+  .strict();
+
 export const WeatherHeroNodeSchema = z
   .object({
     ...nodeBase,
@@ -206,7 +271,7 @@ export const HourlyForecastNodeSchema = z
     component: z.literal("HourlyForecast"),
     label: boundedText(80).default("Hourly"),
     unit: z.enum(["F", "C"]),
-    items: z.array(hourlyItemSchema).min(2).max(24),
+    items: z.array(hourlyItemSchema).min(1).max(24),
     variant: z.enum(["strip", "chart"]).optional(),
   })
   .strict();
@@ -278,14 +343,14 @@ export const ComparisonTableNodeSchema = z
     component: z.literal("ComparisonTable"),
     caption: boundedText(160),
     columns: z.array(boundedText(80)).min(2).max(6),
-    rows: z.array(z.array(z.string().trim().max(160)).min(2).max(6)).min(1).max(12),
+    rows: z.array(z.array(z.string().trim().max(160)).min(2).max(6)).min(1).max(24),
   })
   .strict();
 
 const chartSeriesSchema = z
   .object({
     label: boundedText(80),
-    values: z.array(z.number().finite()).min(2).max(12),
+    values: z.array(z.number().finite()).min(2).max(24),
   })
   .strict();
 
@@ -294,7 +359,7 @@ export const ComparisonChartNodeSchema = z
     ...nodeBase,
     component: z.literal("ComparisonChart"),
     title: boundedText(160),
-    labels: z.array(boundedText(60)).min(2).max(12),
+    labels: z.array(boundedText(60)).min(2).max(24),
     series: z.array(chartSeriesSchema).min(1).max(4),
     unit: z.string().trim().max(24).optional(),
     variant: z.enum(["line", "bar"]).optional(),
@@ -367,6 +432,12 @@ export const SurfaceNodeSchema = z.discriminatedUnion("component", [
   SplitNodeSchema,
   RailNodeSchema,
   DividerNodeSchema,
+  StackNodeSchema,
+  GridNodeSchema,
+  SectionNodeSchema,
+  CardNodeSchema,
+  TabsNodeSchema,
+  DisclosureNodeSchema,
   WeatherHeroNodeSchema,
   RecommendationBandNodeSchema,
   HourlyForecastNodeSchema,
@@ -388,14 +459,56 @@ export const SurfaceSpecSchema = z
     rootId: idSchema,
     components: z.array(SurfaceNodeSchema).min(1).max(LIMITS.surfaceNodes),
   })
-  .strict();
+  .strict()
+  .superRefine((spec, context) => {
+    spec.components.forEach((component, componentIndex) => {
+      if (component.component === "ComparisonTable") {
+        component.rows.forEach((row, rowIndex) => {
+          if (row.length === component.columns.length) return;
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["components", componentIndex, "rows", rowIndex],
+            message: "Comparison table rows must match the column count.",
+          });
+        });
+      }
+
+      if (component.component === "ComparisonChart") {
+        component.series.forEach((series, seriesIndex) => {
+          if (series.values.length === component.labels.length) return;
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["components", componentIndex, "series", seriesIndex, "values"],
+            message: "Comparison chart series values must match the label count.",
+          });
+        });
+      }
+
+      if (component.component === "Tabs") {
+        if (component.labels.length !== component.children.length) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["components", componentIndex, "labels"],
+            message: "Tab labels must match the tab child count.",
+          });
+        }
+        if (component.defaultIndex >= component.children.length) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["components", componentIndex, "defaultIndex"],
+            message: "The default tab must reference an available child.",
+          });
+        }
+      }
+    });
+  });
 
 export const A2uiMessageSchema = z.union([
   z.object({
     version: z.literal(A2UI_VERSION),
     createSurface: z.object({
       surfaceId: z.string().min(1).max(80),
-      catalogId: z.literal(CATALOG_ID),
+      catalogId: z.enum(CATALOG_IDS),
       sendDataModel: z.literal(false).optional(),
     }),
   }),
@@ -444,8 +557,10 @@ export const TraceRecordSchema = z
           .object({
             code: z.enum([
               "recipe_fit",
+              "graph_integrity",
               "answer_first",
               "sources_last",
+              "sources_visible",
               "requested_coverage",
               "duplicate_primary",
               "chart_table_alignment",
@@ -460,6 +575,22 @@ export const TraceRecordSchema = z
       .optional(),
     repairCategory: z.enum(["none", "semantic"]).optional(),
     compilerResult: z.enum(["compiled", "deterministic-fallback"]).optional(),
+    compositionMode: z.enum(["plan-v2", "grammar-v3"]).optional(),
+    layoutFamily: z.enum([
+      "stack",
+      "grid",
+      "split",
+      "section",
+      "card",
+      "rail",
+      "tabs",
+      "disclosure",
+      "divider",
+      "plan-v2-fallback",
+      "unknown",
+    ]).optional(),
+    contentNodeCount: z.number().int().min(0).max(12).optional(),
+    layoutNodeCount: z.number().int().min(0).max(8).optional(),
   })
   .strict();
 

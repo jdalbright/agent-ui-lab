@@ -13,7 +13,19 @@ export type SurfaceValidationResult =
 
 type LayoutNode = Extract<
   SurfaceNode,
-  { component: "SurfaceFrame" | "Band" | "Split" | "Rail" }
+  {
+    component:
+      | "SurfaceFrame"
+      | "Band"
+      | "Split"
+      | "Rail"
+      | "Stack"
+      | "Grid"
+      | "Section"
+      | "Card"
+      | "Tabs"
+      | "Disclosure";
+  }
 >;
 
 function isLayoutNode(node: SurfaceNode): node is LayoutNode {
@@ -21,7 +33,13 @@ function isLayoutNode(node: SurfaceNode): node is LayoutNode {
     node.component === "SurfaceFrame" ||
     node.component === "Band" ||
     node.component === "Split" ||
-    node.component === "Rail"
+    node.component === "Rail" ||
+    node.component === "Stack" ||
+    node.component === "Grid" ||
+    node.component === "Section" ||
+    node.component === "Card" ||
+    node.component === "Tabs" ||
+    node.component === "Disclosure"
   );
 }
 

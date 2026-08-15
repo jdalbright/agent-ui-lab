@@ -2,7 +2,7 @@ const PRODUCTION_ORIGIN = "https://lab.jalbright.dev";
 
 export type RuntimeMode = "production" | "preview" | "development" | "test";
 
-export type SurfaceComposerVersion = "spec-v1" | "plan-v2";
+export type SurfaceComposerVersion = "spec-v1" | "plan-v2" | "grammar-v3";
 
 export type RuntimeIssueCode =
   | "LIVE_PROVIDERS_REQUIRED"
@@ -13,7 +13,8 @@ export type RuntimeIssueCode =
   | "ORIGIN_ALLOWLIST_REQUIRED"
   | "ORIGIN_ALLOWLIST_INVALID"
   | "DEMO_FIXTURES_FORBIDDEN"
-  | "SURFACE_COMPOSER_VERSION_INVALID";
+  | "SURFACE_COMPOSER_VERSION_INVALID"
+  | "SURFACE_GRAMMAR_V3_ROLLOUT_INVALID";
 
 export type RuntimeConfig = {
   mode: RuntimeMode;
@@ -28,6 +29,7 @@ export type RuntimeConfig = {
   allowedOrigins: readonly string[];
   allowDemoFixtures: boolean;
   surfaceComposerVersion: SurfaceComposerVersion;
+  surfaceGrammarV3RolloutPercent: number;
 };
 
 export type RuntimeReadinessMetadata = {
@@ -152,7 +154,19 @@ export function readRuntimeConfig(
   const allowDemoFixtures = parseBoolean(environment.ALLOW_DEMO_FIXTURES);
   const surfaceComposerVersionValue = value(environment, "SURFACE_COMPOSER_VERSION");
   const surfaceComposerVersion: SurfaceComposerVersion =
-    surfaceComposerVersionValue === "plan-v2" ? "plan-v2" : "spec-v1";
+    surfaceComposerVersionValue === "plan-v2" || surfaceComposerVersionValue === "grammar-v3"
+      ? surfaceComposerVersionValue
+      : "spec-v1";
+  const rolloutValue = value(environment, "SURFACE_GRAMMAR_V3_ROLLOUT_PERCENT");
+  const parsedRollout = rolloutValue === undefined ? undefined : Number(rolloutValue);
+  const rolloutIsValid =
+    parsedRollout === undefined ||
+    (Number.isInteger(parsedRollout) && parsedRollout >= 0 && parsedRollout <= 100);
+  const surfaceGrammarV3RolloutPercent = rolloutIsValid && parsedRollout !== undefined
+    ? parsedRollout
+    : surfaceComposerVersion === "grammar-v3"
+      ? 100
+      : 0;
   const originResult = allowedOrigins(environment);
   const issues = new Set<RuntimeIssueCode>();
 
@@ -182,10 +196,12 @@ export function readRuntimeConfig(
   if (
     surfaceComposerVersionValue &&
     surfaceComposerVersionValue !== "spec-v1" &&
-    surfaceComposerVersionValue !== "plan-v2"
+    surfaceComposerVersionValue !== "plan-v2" &&
+    surfaceComposerVersionValue !== "grammar-v3"
   ) {
     issues.add("SURFACE_COMPOSER_VERSION_INVALID");
   }
+  if (!rolloutIsValid) issues.add("SURFACE_GRAMMAR_V3_ROLLOUT_INVALID");
 
   if (issues.size > 0) return { ready: false, issues: [...issues] };
 
@@ -200,6 +216,7 @@ export function readRuntimeConfig(
     allowedOrigins: originResult.origins,
     allowDemoFixtures,
     surfaceComposerVersion,
+    surfaceGrammarV3RolloutPercent,
   };
 
   return {

@@ -22,10 +22,11 @@
     "test:e2e": "playwright test",
     "test:e2e:app": "playwright test e2e/agent-ui-lab.spec.ts",
     "eval": "vitest run src/evals/eval-contract.test.ts",
-    "eval:ui:semantic": "vitest run src/evals/ui-quality.test.ts src/evals/ui-quality-fixtures.test.ts src/evals/ui-quality-live-runner.test.ts",
+    "eval:ui:semantic": "vitest run src/evals/ui-quality.test.ts src/evals/ui-quality-fixtures.test.ts src/evals/ui-quality-live-runner.test.ts src/evals/recorded-ui-quality-stream.test.ts src/evals/generative-ui-quality.test.ts src/evals/generative-ui-quality-live-runner.test.ts",
     "eval:ui:browser": "playwright test e2e/surface-recipes.spec.ts --project=desktop",
     "eval:ui": "npm run eval:ui:semantic && npm run build && npm run eval:ui:browser",
-    "eval:ui:live": "RUN_LIVE_UI_EVALS=true vitest run src/evals/ui-quality-live.test.ts"
+    "eval:ui:live": "RUN_LIVE_UI_EVALS=true vitest run src/evals/ui-quality-live.test.ts",
+    "eval:ui:live:v3": "RUN_LIVE_GENERATIVE_UI_EVALS=true vitest run src/evals/generative-ui-quality-live.test.ts"
   },
   "dependencies": {
     "@a2ui/markdown-it": "0.1.0",

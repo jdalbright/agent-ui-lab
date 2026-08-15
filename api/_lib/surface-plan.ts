@@ -1,12 +1,19 @@
 import { z } from "zod";
 import { LIMITS } from "../../shared/constants.js";
 import {
+  SURFACE_CONTENT_BUDGETS,
+  evaluateSurfaceContentBudget,
+} from "../../shared/surface-content-budget.js";
+import { parseStrictFormattedNumber } from "../../shared/strict-numeric.js";
+import {
   SurfaceSpecSchema,
   type ClientContext,
   type SourceRecord,
   type SurfaceSpec,
 } from "../../shared/schemas.js";
 import type { GeminiRetrievalResult, WeatherEvidence } from "./gemini.js";
+import { requestedLocalHourCoverage } from "./weather-local-hour.js";
+import { parseWeatherRequestIntent } from "./weather-request-intent.js";
 
 export const SURFACE_RECIPE_IDS = [
   "weather.snapshot",
@@ -25,13 +32,33 @@ const emphasisSchema = z.enum(["answer", "decision", "trend", "evidence", "risk"
 const sourceIdSchema = z.string().regex(/^src_[a-z0-9]{6,32}$/);
 const boundedText = (maximum: number) => z.string().trim().min(1).max(maximum);
 const boundedOptionalText = (maximum: number) => z.string().trim().max(maximum).optional();
+const RAW_PLAN_URL_PATTERN = /(?:\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.)[^\s<>"']*/i;
+const MARKUP_LIKE_TAG_PATTERN =
+  /<\s*\/?\s*[a-z][^<>]*>|<!--[\s\S]*?-->|<!doctype\b[^>]*>|<\?xml\b[\s\S]*?\?>/i;
+const EXECUTABLE_URL_SCHEME_PATTERN = /\b(?:javascript|data|vbscript)\s*:/i;
+const SAFE_PLAN_TEXT_MESSAGE =
+  "Use safe declarative text without raw URLs, markup-like tags, or executable URL schemes.";
+
+function isSafePlanText(value: string): boolean {
+  return (
+    !RAW_PLAN_URL_PATTERN.test(value) &&
+    !MARKUP_LIKE_TAG_PATTERN.test(value) &&
+    !EXECUTABLE_URL_SCHEME_PATTERN.test(value)
+  );
+}
+
+const safePlanText = (maximum: number) =>
+  z.string().trim().min(1).max(maximum).refine(isSafePlanText, SAFE_PLAN_TEXT_MESSAGE);
+const safePlanTextAllowEmpty = (maximum: number) =>
+  z.string().trim().max(maximum).refine(isSafePlanText, SAFE_PLAN_TEXT_MESSAGE);
+const safeOptionalPlanText = (maximum: number) => safePlanTextAllowEmpty(maximum).optional();
 const sourceIdsSchema = z.array(sourceIdSchema).min(1).max(LIMITS.sources);
 const indexSchema = z.number().int().min(0);
 
 const sourceModuleSchema = z
   .object({
     type: z.literal("sources"),
-    label: boundedText(80),
+    label: safePlanText(80),
     sourceIds: sourceIdsSchema,
   })
   .strict();
@@ -41,9 +68,9 @@ const weatherHeroModuleSchema = z
     type: z.literal("hero"),
     variant: z.enum(["snapshot", "decision"]),
     locationIndex: indexSchema,
-    recommendationLabel: boundedText(80),
-    recommendationValue: boundedText(120),
-    recommendationDetail: boundedText(240),
+    recommendationLabel: safePlanText(80),
+    recommendationValue: safePlanText(120),
+    recommendationDetail: safePlanText(240),
   })
   .strict();
 
@@ -73,9 +100,9 @@ const weatherHourlyModuleSchema = z
   .object({
     type: z.literal("hourly"),
     variant: z.enum(["strip", "chart"]),
-    label: boundedText(80),
+    label: safePlanText(80),
     locationIndex: indexSchema,
-    hourIndexes: z.array(indexSchema).min(2).max(24),
+    hourIndexes: z.array(indexSchema).min(1).max(24),
   })
   .strict();
 
@@ -83,7 +110,7 @@ const weatherDailyModuleSchema = z
   .object({
     type: z.literal("daily"),
     variant: z.enum(["cards", "table"]),
-    label: boundedText(80),
+    label: safePlanText(80),
     locationIndex: indexSchema,
     dayIndexes: z.array(indexSchema).min(1).max(10),
   })
@@ -122,9 +149,9 @@ const weatherModuleSchema = z.union([
 
 const comparisonItemSchema = z
   .object({
-    label: boundedText(120),
-    value: boundedText(120),
-    detail: boundedOptionalText(220),
+    label: safePlanText(120),
+    value: safePlanText(120),
+    detail: safeOptionalPlanText(220),
     recommended: z.boolean(),
   })
   .strict();
@@ -135,8 +162,8 @@ const authoredComparisonSummaryModuleSchema = z
   .object({
     type: z.literal("summary"),
     variant: z.enum(["verdict", "balanced"]),
-    title: boundedText(180),
-    recommendation: boundedText(400),
+    title: safePlanText(180),
+    recommendation: safePlanText(400),
     items: z.array(comparisonItemSchema).min(2).max(4),
     sourceIds: sourceIdsSchema,
   })
@@ -146,8 +173,8 @@ const weatherComparisonSummaryModuleSchema = z
   .object({
     type: z.literal("summary"),
     variant: z.enum(["verdict", "balanced"]),
-    title: boundedText(180),
-    recommendation: boundedText(400),
+    title: safePlanText(180),
+    recommendation: safePlanText(400),
     locationIndexes: locationIndexesSchema,
     recommendedLocationIndex: indexSchema.optional(),
     sourceIds: sourceIdsSchema,
@@ -157,9 +184,9 @@ const weatherComparisonSummaryModuleSchema = z
 const authoredComparisonTableModuleSchema = z
   .object({
     type: z.literal("table"),
-    caption: boundedText(160),
-    columns: z.array(boundedText(80)).min(2).max(6),
-    rows: z.array(z.array(z.string().trim().max(160)).min(2).max(6)).min(1).max(12),
+    caption: safePlanText(160),
+    columns: z.array(safePlanText(80)).min(2).max(6),
+    rows: z.array(z.array(safePlanTextAllowEmpty(160)).min(2).max(6)).min(1).max(12),
     sourceIds: sourceIdsSchema,
   })
   .strict();
@@ -184,10 +211,10 @@ const weatherForecastMetricSchema = z.enum([
 const weatherComparisonTableModuleSchema = z
   .object({
     type: z.literal("table"),
-    caption: boundedText(160),
+    caption: safePlanText(160),
     locationIndexes: locationIndexesSchema,
     forecastKind: z.enum(["current", "hourly", "daily"]),
-    forecastIndexes: z.array(indexSchema).min(1).max(12).optional(),
+    forecastIndexes: z.array(indexSchema).min(1).max(24).optional(),
     metrics: z.array(weatherCurrentMetricSchema).min(1).max(7).optional(),
     metric: weatherForecastMetricSchema.optional(),
     sourceIds: sourceIdsSchema,
@@ -198,20 +225,20 @@ const authoredComparisonChartModuleSchema = z
   .object({
     type: z.literal("chart"),
     variant: z.enum(["line", "bar"]),
-    title: boundedText(160),
-    labels: z.array(boundedText(60)).min(2).max(12),
+    title: safePlanText(160),
+    labels: z.array(safePlanText(60)).min(2).max(12),
     series: z
       .array(
         z
           .object({
-            label: boundedText(80),
+            label: safePlanText(80),
             values: z.array(z.number().finite()).min(2).max(12),
           })
           .strict(),
       )
       .min(1)
       .max(4),
-    unit: boundedOptionalText(24),
+    unit: safeOptionalPlanText(24),
     sourceIds: sourceIdsSchema,
   })
   .strict();
@@ -220,10 +247,10 @@ const weatherComparisonChartModuleSchema = z
   .object({
     type: z.literal("chart"),
     variant: z.enum(["line", "bar"]),
-    title: boundedText(160),
+    title: safePlanText(160),
     locationIndexes: locationIndexesSchema,
     forecastKind: z.enum(["hourly", "daily"]),
-    forecastIndexes: z.array(indexSchema).min(2).max(12),
+    forecastIndexes: z.array(indexSchema).min(2).max(24),
     metric: weatherForecastMetricSchema,
     sourceIds: sourceIdsSchema,
   })
@@ -243,8 +270,8 @@ const researchLeadModuleSchema = z
   .object({
     type: z.literal("lead"),
     variant: z.enum(["feature", "brief"]),
-    title: boundedText(220),
-    summary: boundedText(1_200),
+    title: safePlanText(220),
+    summary: safePlanText(1_200),
     sourceIds: sourceIdsSchema,
   })
   .strict();
@@ -253,15 +280,15 @@ const researchEvidenceModuleSchema = z
   .object({
     type: z.literal("evidence"),
     variant: z.enum(["stack", "grid", "for-against"]),
-    label: boundedText(80),
+    label: safePlanText(80),
     items: z
       .array(
         z
           .object({
-            title: boundedText(180),
-            finding: boundedText(700),
+            title: safePlanText(180),
+            finding: safePlanText(700),
             sourceId: sourceIdSchema,
-            stance: z.enum(["support", "challenge", "neutral"]).optional(),
+            stance: z.enum(["support", "challenge", "neutral"]),
           })
           .strict(),
       )
@@ -273,14 +300,14 @@ const researchEvidenceModuleSchema = z
 const researchTimelineModuleSchema = z
   .object({
     type: z.literal("timeline"),
-    label: boundedText(80),
+    label: safePlanText(80),
     items: z
       .array(
         z
           .object({
-            date: boundedText(80),
-            title: boundedText(180),
-            detail: boundedText(500),
+            date: safePlanText(80),
+            title: safePlanText(180),
+            detail: safePlanText(500),
             sourceId: sourceIdSchema,
           })
           .strict(),
@@ -326,6 +353,24 @@ export const SurfacePlanSchema = z.discriminatedUnion("recipeId", [
 ]);
 
 export type SurfacePlan = z.infer<typeof SurfacePlanSchema>;
+export const WeatherPlanModuleSchema = weatherModuleSchema;
+export const ComparisonPlanModuleSchema = comparisonModuleSchema;
+export const ResearchPlanModuleSchema = researchModuleSchema;
+export type SurfacePlanModule = SurfacePlan["modules"][number];
+
+function definingModuleForPlan(
+  plan: SurfacePlan,
+  prompt: string | undefined,
+): SurfacePlan["modules"][number]["type"] {
+  const intent = parseWeatherRequestIntent(prompt ?? "");
+  if (
+    plan.recipeId === "weather.outlook" &&
+    (intent.forecastHours !== undefined || intent.localTime !== undefined)
+  ) {
+    return "hourly";
+  }
+  return SURFACE_RECIPES[plan.recipeId].requiredModule;
+}
 
 export const SURFACE_RECIPES = Object.freeze({
   "weather.snapshot": {
@@ -345,8 +390,8 @@ export const SURFACE_RECIPES = Object.freeze({
     example: "When should I walk this evening?",
   },
   "weather.outlook": {
-    selectionRule: "Choose for requested day ranges or changing conditions over time.",
-    idealUse: "A multi-day forecast and risk outlook.",
+    selectionRule: "Choose for requested hour or day ranges and changing conditions over time.",
+    idealUse: "A bounded hourly or multi-day forecast and risk outlook.",
     misuseWarning: "Do not use when only the current temperature is requested.",
     compatibleModules: ["hero", "recommendation", "daily", "hourly", "alerts", "sources"],
     requiredModule: "daily",
@@ -401,6 +446,40 @@ export const SURFACE_RECIPES = Object.freeze({
     example: "What evidence supports and challenges this claim?",
   },
 } as const);
+
+const CANONICAL_MODULE_ORDER = {
+  "weather.snapshot": ["hero", "metrics", "hourly", "alerts", "sources"],
+  "weather.decision": ["hero", "recommendation", "hourly", "daily", "alerts", "sources"],
+  "weather.outlook": ["hero", "daily", "recommendation", "hourly", "alerts", "sources"],
+  "comparison.verdict": ["summary", "table", "sources"],
+  "comparison.scorecard": ["summary", "table", "chart", "sources"],
+  "comparison.trend": ["summary", "chart", "table", "sources"],
+  "research.brief": ["lead", "evidence", "timeline", "sources"],
+  "research.timeline": ["lead", "timeline", "evidence", "sources"],
+  "research.claims": ["lead", "evidence", "sources"],
+} as const satisfies Readonly<Record<SurfacePlan["recipeId"], readonly string[]>>;
+
+function canonicalModuleOrder(plan: SurfacePlan, prompt: string | undefined): readonly string[] {
+  const intent = parseWeatherRequestIntent(prompt ?? "");
+  if (
+    plan.recipeId === "weather.outlook" &&
+    (intent.forecastHours !== undefined || intent.localTime !== undefined)
+  ) {
+    return ["hero", "hourly", "recommendation", "daily", "alerts", "sources"];
+  }
+  return CANONICAL_MODULE_ORDER[plan.recipeId];
+}
+
+function modulesFollowCanonicalOrder(plan: SurfacePlan, prompt: string | undefined): boolean {
+  const order = canonicalModuleOrder(plan, prompt);
+  let previous = -1;
+  for (const module of plan.modules) {
+    const current = order.indexOf(module.type);
+    if (current < 0 || current < previous) return false;
+    previous = current;
+  }
+  return true;
+}
 
 const conditionSchema = z.enum([
   "clear",
@@ -564,6 +643,10 @@ export interface SurfacePlanValidationContext {
   clientContext?: ClientContext;
 }
 
+export interface SurfacePlanValidationOptions {
+  mode?: "recipe-v2" | "grammar-v3";
+}
+
 export type SurfacePlanValidationResult =
   | { success: true; plan: SurfacePlan }
   | { success: false; issues: string[] };
@@ -661,7 +744,11 @@ function contentSourceIds(
   context: SurfacePlanValidationContext,
   state: WeatherState,
 ): string[] {
-  const sourceIds: string[] = [];
+  const sourceIds: string[] = state.locations.length > 0
+    ? context.sources
+        .filter((source) => source.provider === "google-weather")
+        .map((source) => source.id)
+    : [];
   const generalWeatherId = generalWeatherSourceId(context.sources, state);
 
   for (const module of plan.modules) {
@@ -698,13 +785,19 @@ function contentSourceIds(
   return [...new Set(sourceIds)];
 }
 
-function expectedRecipeForPrompt(
+export function expectedRecipeForPrompt(
   prompt: string | undefined,
   kind: SurfacePlan["kind"],
   weatherBacked = false,
 ): SurfacePlan["recipeId"] | undefined {
   if (!prompt?.trim()) return undefined;
   const normalized = prompt.toLocaleLowerCase("en-US");
+  const weatherIntent = parseWeatherRequestIntent(prompt);
+  const wordNumber = String.raw`(?:one|two|three|four|five|six|seven|eight|nine|ten)`;
+  const orderedTimeRange = new RegExp(
+    String.raw`\b(?:next\s+)?(?:\d{1,4}|${wordNumber})\s*[- ]?(?:hours?|days?|weeks?|months?|years?|releases?)\b|\b(?:next|this)\s+week\b`,
+  ).test(normalized);
+  const chartOrPlot = /\b(?:chart|plot|graph)\b/.test(normalized);
 
   if (kind === "weather") {
     if (
@@ -715,9 +808,10 @@ function expectedRecipeForPrompt(
       return "weather.decision";
     }
     if (
-      /\b(outlook|forecast|through|until|next week|this week|weekend|tomorrow|\d+\s*[- ]?days?)\b/.test(
-        normalized,
-      )
+      orderedTimeRange ||
+      weatherIntent.localTime !== undefined ||
+      weatherIntent.nextWeekday !== undefined ||
+      /\b(outlook|forecast|through|until|weekend|tomorrow)\b/.test(normalized)
     ) {
       return "weather.outlook";
     }
@@ -726,7 +820,9 @@ function expectedRecipeForPrompt(
 
   if (kind === "comparison") {
     if (
-      /\b(trend|over time|timeline|history|growth|adoption|across (?:the )?(?:last|next)|\d+\s*(?:days?|weeks?|months?|years?|releases?))\b/.test(normalized) ||
+      /\b(trend|over time|timeline|history|growth|adoption|across (?:the )?(?:last|next))\b/.test(normalized) ||
+      orderedTimeRange ||
+      (chartOrPlot && weatherBacked) ||
       (weatherBacked &&
         (/\bweekend\b/.test(normalized) ||
           /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.+\b(?:and|through|to|versus|vs\.?)\b.+\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(
@@ -791,15 +887,24 @@ function extractRequestedCriteria(prompt: string): string[] {
     !singleForLooksLikeLocation
       ? forClause
       : undefined;
+  const methodClause = /\b(?:using|with)\s+([^?.]+)/.exec(normalized)?.[1];
+  const explicitMethodCriteria =
+    methodClause &&
+    !/^(?:only\s+)?(?:official\s+)?(?:sources?|evidence|documentation)$/.test(methodClause.trim())
+      ? methodClause
+      : undefined;
   const explicit =
     normalized.match(/(?:criteria(?:\s+(?:are|of))?)\s*[:-]?\s*([^?.]+)/)?.[1] ??
     normalized.match(/(?:^|\s)(?:on|by|across)\s+([^?.]+)/)?.[1] ??
     colonClause ??
-    explicitForCriteria;
-  const criteriaText = explicit?.replace(
-    /\b(?:then\s+)?(?:and\s+)?(?:tell me|which|recommend|choose|decide)\b.*$/,
-    "",
-  );
+    explicitForCriteria ??
+    explicitMethodCriteria;
+  const criteriaText = explicit
+    ?.replace(
+      /\b(?:then\s+)?(?:and\s+)?(?:tell me|which|recommend|choose|decide)\b.*$/,
+      "",
+    )
+    .replace(/\b(?:using|with)\s+(?:only\s+)?(?:official\s+)?(?:sources?|evidence|documentation)\b.*$/, "");
   const candidates = criteriaText
     ? criteriaText.split(/,|\band\b|\bversus\b|\bvs\.?\b/)
     : [];
@@ -834,31 +939,25 @@ function extractRequestedCriteria(prompt: string): string[] {
 
 function requestedRange(prompt: string | undefined, unit: "hour" | "day"): number | undefined {
   if (!prompt) return undefined;
-  const normalized = prompt.toLocaleLowerCase("en-US");
-  const expression = unit === "hour"
-    ? /\b(?:next\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*[- ]?hours?\b/
-    : /\b(?:next\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*[- ]?days?\b/;
-  const numeric = expression.exec(normalized);
-  if (numeric) {
-    const wordNumbers: Readonly<Record<string, number>> = {
-      one: 1,
-      two: 2,
-      three: 3,
-      four: 4,
-      five: 5,
-      six: 6,
-      seven: 7,
-      eight: 8,
-      nine: 9,
-      ten: 10,
-    };
-    return wordNumbers[numeric[1]] ?? Number(numeric[1]);
-  }
-  if (unit === "day") {
-    if (/\b(?:next|this) week\b/.test(normalized)) return 7;
-    if (/\btoday\s+(?:and|through)\s+tomorrow\b/.test(normalized)) return 2;
-  }
-  return undefined;
+  const intent = parseWeatherRequestIntent(prompt);
+  if (unit === "hour") return intent.forecastHours;
+  if (intent.forecastDays !== undefined) return intent.forecastDays;
+  return intent.relativeDayOffsets.length > 1
+    ? Math.max(...intent.relativeDayOffsets) + 1
+    : undefined;
+}
+
+function requestedTemperatureUnit(
+  prompt: string | undefined,
+  clientContext: ClientContext | undefined,
+): "F" | "C" | undefined {
+  const requestedUnits = parseWeatherRequestIntent(prompt ?? "").requestedUnits;
+  if (requestedUnits) return requestedUnits === "metric" ? "C" : "F";
+  return clientContext?.units === "metric"
+    ? "C"
+    : clientContext?.units === "imperial"
+      ? "F"
+      : undefined;
 }
 
 function requestedDayCount(prompt: string | undefined, state: WeatherState): number | undefined {
@@ -928,7 +1027,13 @@ function requestedSpecificDayIndexes(
     normalized,
   );
   if (single) requested.add(single[1]);
-  if (requested.size === 0) return [];
+  const relativeDayOffset =
+    /\btomorrow\b/.test(normalized) &&
+    !requestedActivity(prompt) &&
+    requestedLocalMinutes(prompt) === undefined
+      ? 1
+      : undefined;
+  if (requested.size === 0 && relativeDayOffset === undefined) return [];
 
   const indexes: number[] = [];
   state.locations[0].daily.forEach((day, index) => {
@@ -937,7 +1042,57 @@ function requestedSpecificDayIndexes(
     const weekday = weekdayNames[parsed.getUTCDay()];
     if (requested.has(weekday)) indexes.push(index);
   });
-  return indexes.length >= requested.size ? indexes : [...indexes, -1];
+  const nextWeekday = /\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.exec(
+    normalized,
+  )?.[1];
+  if (nextWeekday) {
+    const location = state.locations[0];
+    const observed = localCalendarOrdinal(location.current.observedAt, location.current.timeZone);
+    const nextIndex = indexes.find((index) => {
+      const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(location.daily[index]?.date ?? "");
+      if (!parsed || observed === undefined) return false;
+      const ordinal = Math.floor(
+        Date.UTC(Number(parsed[1]), Number(parsed[2]) - 1, Number(parsed[3])) / 86_400_000,
+      );
+      return ordinal > observed;
+    });
+    return [nextIndex ?? -1];
+  }
+  if (relativeDayOffset !== undefined) {
+    const location = state.locations[0];
+    const observed = localCalendarOrdinal(location.current.observedAt, location.current.timeZone);
+    const relativeIndex = location.daily.findIndex((day) => {
+      const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day.date);
+      if (!parsed) return false;
+      const ordinal = Math.floor(
+        Date.UTC(Number(parsed[1]), Number(parsed[2]) - 1, Number(parsed[3])) / 86_400_000,
+      );
+      return observed !== undefined && ordinal - observed === relativeDayOffset;
+    });
+    indexes.push(relativeIndex);
+  }
+  return indexes.length >= requested.size + (relativeDayOffset === undefined ? 0 : 1)
+    ? [...new Set(indexes)]
+    : [...new Set([...indexes, -1])];
+}
+
+function requestedDailyCandidateIndexes(
+  prompt: string | undefined,
+  state: WeatherState,
+  locationIndex: number,
+): number[] {
+  const location = state.locations[locationIndex];
+  if (!location) return [];
+  const count = requestedDayCount(prompt, state);
+  if (count !== undefined) {
+    return location.daily.slice(0, Math.min(count, location.daily.length)).map((_, index) => index);
+  }
+  const specific = requestedSpecificDayIndexes(prompt, state).filter(
+    (index) => index >= 0 && index < location.daily.length,
+  );
+  return specific.length > 0
+    ? [...new Set(specific)]
+    : location.daily.map((_, index) => index);
 }
 
 function requestedActivity(prompt: string | undefined): string | undefined {
@@ -953,6 +1108,18 @@ function requestedActivity(prompt: string | undefined): string | undefined {
     [/\bgolf\b/, "golf"],
   ];
   return activities.find(([pattern]) => pattern.test(normalized))?.[1];
+}
+
+function canonicalActivity(value: string): string {
+  const normalized = value.toLocaleLowerCase("en-US");
+  if (/\b(?:run|running|jog|jogging)\b/.test(normalized)) return "run";
+  if (/\b(?:walk|walking)\b/.test(normalized)) return "walk";
+  if (/\b(?:hike|hiking)\b/.test(normalized)) return "hike";
+  if (/\b(?:bike|biking|cycle|cycling|ride)\b/.test(normalized)) return "bike";
+  if (/\bbrunch\b/.test(normalized)) return "brunch";
+  if (/\bdinner\b/.test(normalized)) return "dinner";
+  if (/\bgolf\b/.test(normalized)) return "golf";
+  return normalized.trim();
 }
 
 function requestedLocalMinutes(prompt: string | undefined): number | undefined {
@@ -1013,7 +1180,10 @@ function activityRecommendationCoverageIssues(
     : /\btoday\b/i.test(context.prompt)
       ? 0
       : undefined;
-  if (!activity && localMinutes === undefined && !weekday && requestedDayOffset === undefined) return [];
+  const decisionIntent = /\b(?:when should|best time|best window|safe to|can i)\b/i.test(
+    context.prompt,
+  );
+  if (!activity && !decisionIntent) return [];
 
   const issues: string[] = [];
   const recommendations = plan.modules.filter(
@@ -1025,8 +1195,8 @@ function activityRecommendationCoverageIssues(
     const location = state.locations[module.locationIndex];
     const window = state.activityWindows[module.activityWindowIndex];
     if (!location || !window) continue;
-    const describedActivity = `${window.activity ?? ""} ${window.label}`.toLocaleLowerCase("en-US");
-    if (activity && !describedActivity.includes(activity)) {
+    const describedActivity = canonicalActivity(`${window.activity ?? ""} ${window.label}`);
+    if (activity && describedActivity !== activity) {
       issues.push(`Requested ${activity} activity is not covered by the selected window.`);
     }
     const local = localWindowParts(window.startTime, location.current.timeZone);
@@ -1362,11 +1532,6 @@ function includesInitialRange(indexes: readonly number[], count: number): boolea
   return true;
 }
 
-function parseNumericCell(value: string): number | undefined {
-  const parsed = Number.parseFloat(value.replace(/[^0-9+-.]/g, ""));
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function authoredChartTableAligned(
   chart: AuthoredComparisonChartModule,
   table: AuthoredComparisonTableModule,
@@ -1379,7 +1544,9 @@ function authoredChartTableAligned(
       const row = table.rows[seriesIndex];
       return (
         row?.[0] === series.label &&
-        series.values.every((value, valueIndex) => parseNumericCell(row[valueIndex + 1] ?? "") === value)
+        series.values.every(
+          (value, valueIndex) => parseStrictFormattedNumber(row[valueIndex + 1]) === value,
+        )
       );
     });
   if (rowOriented) return true;
@@ -1393,7 +1560,8 @@ function authoredChartTableAligned(
       return (
         row?.[0] === label &&
         chart.series.every(
-          (series, seriesIndex) => parseNumericCell(row[seriesIndex + 1] ?? "") === series.values[labelIndex],
+          (series, seriesIndex) =>
+            parseStrictFormattedNumber(row[seriesIndex + 1]) === series.values[labelIndex],
         )
       );
     })
@@ -1434,21 +1602,87 @@ function alignedForecastIndex(
   location: WeatherLocationEvidence,
   forecastKind: "hourly" | "daily",
   anchorIndex: number,
+  prompt?: string,
 ): number {
   if (forecastKind === "hourly") {
+    if (parseWeatherRequestIntent(prompt ?? "").localTime !== undefined) {
+      const coverage = requestedLocalHourCoverage(prompt ?? "", [anchor, location]);
+      const anchorIndexes = coverage.find((item) => item.locationIndex === 0)?.indexes ?? [];
+      const selectionPosition = anchorIndexes.indexOf(anchorIndex);
+      if (selectionPosition < 0) return -1;
+      return coverage.find((item) => item.locationIndex === 1)?.indexes[selectionPosition] ?? -1;
+    }
     const timestamp = anchor.hourly[anchorIndex]?.startTime;
     return timestamp
       ? location.hourly.findIndex((item) => item.startTime === timestamp)
       : -1;
   }
+  const normalizedPrompt = prompt?.toLocaleLowerCase("en-US") ?? "";
+  const anchorDay = anchor.daily[anchorIndex];
+  const anchorOrdinal = anchorDay ? dateOnlyOrdinal(anchorDay.date) : undefined;
+  const anchorObserved = localCalendarOrdinal(anchor.current.observedAt, anchor.current.timeZone);
+  const locationObserved = localCalendarOrdinal(
+    location.current.observedAt,
+    location.current.timeZone,
+  );
+  const usesNamedLocalDayAxis = /\b(?:weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(
+    normalizedPrompt,
+  );
+  if (anchorDay && usesNamedLocalDayAxis) {
+    const anchorWeekday = weekdayForDate(anchorDay.date);
+    const strictlyFuture = /\bnext\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend)\b/.test(
+      normalizedPrompt,
+    );
+    if (anchorWeekday && locationObserved !== undefined) {
+      const localIndex = location.daily.findIndex((day) => {
+        const ordinal = dateOnlyOrdinal(day.date);
+        return (
+          weekdayForDate(day.date) === anchorWeekday &&
+          ordinal !== undefined &&
+          (strictlyFuture ? ordinal > locationObserved : ordinal >= locationObserved)
+        );
+      });
+      if (localIndex >= 0) return localIndex;
+    }
+  }
+  const usesRelativeLocalDayAxis = /\b(?:today|tomorrow|next\s+(?:(?:\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?days?|this\s+week|next\s+week)\b/.test(
+    normalizedPrompt,
+  );
+  if (
+    usesRelativeLocalDayAxis &&
+    anchorOrdinal !== undefined &&
+    anchorObserved !== undefined &&
+    locationObserved !== undefined
+  ) {
+    const relativeOffset = anchorOrdinal - anchorObserved;
+    const localIndex = location.daily.findIndex(
+      (day) => dateOnlyOrdinal(day.date) === locationObserved + relativeOffset,
+    );
+    if (localIndex >= 0) return localIndex;
+  }
   const date = anchor.daily[anchorIndex]?.date;
   return date ? location.daily.findIndex((item) => item.date === date) : -1;
+}
+
+function dateOnlyOrdinal(value: string): number | undefined {
+  const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!parsed) return undefined;
+  return Math.floor(
+    Date.UTC(Number(parsed[1]), Number(parsed[2]) - 1, Number(parsed[3])) / 86_400_000,
+  );
+}
+
+function weekdayForDate(value: string): number | undefined {
+  const ordinal = dateOnlyOrdinal(value);
+  if (ordinal === undefined) return undefined;
+  return new Date(ordinal * 86_400_000).getUTCDay();
 }
 
 function validateWeatherForecastReferences(
   module: WeatherComparisonTableModule | WeatherComparisonChartModule,
   state: WeatherState,
   issues: string[],
+  prompt?: string,
 ): void {
   if (module.forecastKind === "current") return;
   const indexes = module.forecastIndexes ?? [];
@@ -1464,7 +1698,13 @@ function validateWeatherForecastReferences(
     const location = state.locations[locationIndex];
     if (!location) continue;
     for (const index of indexes) {
-      const alignedIndex = alignedForecastIndex(anchor, location, module.forecastKind, index);
+      const alignedIndex = alignedForecastIndex(
+        anchor,
+        location,
+        module.forecastKind,
+        index,
+        prompt,
+      );
       const forecast = alignedIndex < 0
         ? undefined
         : module.forecastKind === "hourly"
@@ -1472,7 +1712,7 @@ function validateWeatherForecastReferences(
           : location.daily[alignedIndex];
       if (!forecast) {
         issues.push(
-          `${module.forecastKind} comparison evidence index ${index} has no date-aligned record for location ${locationIndex}.`,
+          `${module.forecastKind} comparison evidence index ${index} has no semantically aligned record for location ${locationIndex}.`,
         );
       } else if (
         module.metric === "precipitation" &&
@@ -1483,6 +1723,127 @@ function validateWeatherForecastReferences(
       }
     }
   }
+}
+
+type WeatherWinnerObjective = Readonly<{
+  metric: "precipitation" | "temperature" | "wind";
+  direction: "lower" | "higher";
+}>;
+
+function requestedWeatherWinnerObjective(prompt: string | undefined): WeatherWinnerObjective | undefined {
+  if (!prompt) return undefined;
+  const normalized = prompt.toLocaleLowerCase("en-US");
+  const objectives: WeatherWinnerObjective[] = [];
+  if (
+    /\b(?:drier|driest|less rain|lower precipitation|lowest precipitation|picnic|brunch|outdoor)\b/.test(
+      normalized,
+    )
+  ) {
+    objectives.push({ metric: "precipitation", direction: "lower" });
+  }
+  if (/\b(?:wetter|wettest|more rain|higher precipitation|highest precipitation)\b/.test(normalized)) {
+    objectives.push({ metric: "precipitation", direction: "higher" });
+  }
+  if (/\b(?:warmer|warmest|hotter|hottest|higher temperature)\b/.test(normalized)) {
+    objectives.push({ metric: "temperature", direction: "higher" });
+  }
+  if (/\b(?:cooler|coolest|colder|coldest|lower temperature)\b/.test(normalized)) {
+    objectives.push({ metric: "temperature", direction: "lower" });
+  }
+  if (/\b(?:calmer|least windy|less wind|lower wind)\b/.test(normalized)) {
+    objectives.push({ metric: "wind", direction: "lower" });
+  }
+  if (/\b(?:windier|windiest|more wind|higher wind)\b/.test(normalized)) {
+    objectives.push({ metric: "wind", direction: "higher" });
+  }
+  const unique = objectives.filter(
+    (objective, index) =>
+      objectives.findIndex(
+        (candidate) =>
+          candidate.metric === objective.metric && candidate.direction === objective.direction,
+      ) === index,
+  );
+  return unique.length === 1 ? unique[0] : undefined;
+}
+
+function deterministicWeatherRecommendedLocation(
+  prompt: string | undefined,
+  state: WeatherState,
+  locationIndexes: readonly number[],
+): number | undefined {
+  const objective = requestedWeatherWinnerObjective(prompt);
+  const anchor = state.locations[locationIndexes[0]];
+  if (!objective || !anchor) return undefined;
+
+  const localHourCoverage = prompt
+    ? requestedLocalHourCoverage(prompt, state.locations)
+    : [];
+  if (localHourCoverage.length > 0 && objective.metric !== "wind") {
+    const hourlyValues = locationIndexes.flatMap((locationIndex) => {
+      const location = state.locations[locationIndex];
+      const hourIndex = localHourCoverage.find(
+        (coverage) => coverage.locationIndex === locationIndex,
+      )?.indexes[0];
+      const hour = hourIndex === undefined ? undefined : location?.hourly[hourIndex];
+      if (!hour) return [];
+      const value = objective.metric === "precipitation"
+        ? hour.precipitationProbability
+        : hour.temperature;
+      return value === null ? [] : [{ locationIndex, value }];
+    });
+    if (hourlyValues.length !== locationIndexes.length) return undefined;
+    const ordered = [...hourlyValues].sort((left, right) =>
+      objective.direction === "lower"
+        ? left.value - right.value || left.locationIndex - right.locationIndex
+        : right.value - left.value || left.locationIndex - right.locationIndex
+    );
+    if (!ordered[0] || !ordered[1] || ordered[0].value === ordered[1].value) return undefined;
+    return ordered[0].locationIndex;
+  }
+
+  const explicitIndexes = requestedSpecificDayIndexes(prompt, state).filter(
+    (index) => index >= 0 && index < anchor.daily.length,
+  );
+  const requestedCount = requestedDayCount(prompt, state);
+  const anchorIndexes = explicitIndexes.length > 0
+    ? explicitIndexes
+    : requestedCount
+      ? anchor.daily.slice(0, requestedCount).map((_, index) => index)
+      : [];
+  const values = locationIndexes.flatMap((locationIndex) => {
+    const location = state.locations[locationIndex];
+    if (!location) return [];
+    if (objective.metric === "wind") {
+      return [{ locationIndex, value: location.current.windSpeed }];
+    }
+    if (anchorIndexes.length === 0) {
+      return [{
+        locationIndex,
+        value: objective.metric === "precipitation"
+          ? location.current.precipitationProbability
+          : location.current.temperature,
+      }];
+    }
+    const dailyValues = anchorIndexes.flatMap((anchorIndex) => {
+      const alignedIndex = alignedForecastIndex(anchor, location, "daily", anchorIndex, prompt);
+      const day = alignedIndex >= 0 ? location.daily[alignedIndex] : undefined;
+      if (!day) return [];
+      return [objective.metric === "precipitation" ? day.precipitationProbability : day.high];
+    });
+    if (dailyValues.length !== anchorIndexes.length) return [];
+    return [{
+      locationIndex,
+      value: dailyValues.reduce((sum, value) => sum + value, 0) / dailyValues.length,
+    }];
+  });
+  if (values.length !== locationIndexes.length) return undefined;
+  const ordered = [...values].sort((left, right) =>
+    objective.direction === "lower"
+      ? left.value - right.value || left.locationIndex - right.locationIndex
+      : right.value - left.value || left.locationIndex - right.locationIndex
+  );
+  if (!ordered[0] || !ordered[1] || ordered[0].value === ordered[1].value) return undefined;
+  return ordered[0].locationIndex;
 }
 
 function validateRequestedForecastRange(
@@ -1532,6 +1893,72 @@ function validateRequestedForecastRange(
       issues.push(
         `Requested ${count}-${forecastKind === "hourly" ? "hour" : "day"} range is not fully covered for location index ${locationIndex}.`,
       );
+    }
+  }
+}
+
+function validateRequestedLocalHourCoverage(
+  plan: SurfacePlan,
+  prompt: string | undefined,
+  state: WeatherState,
+  issues: string[],
+): void {
+  if (!prompt) return;
+  const intent = parseWeatherRequestIntent(prompt);
+  if (intent.localTime === undefined || intent.activity !== undefined) return;
+  const expectedCoverage = requestedLocalHourCoverage(prompt, state.locations);
+  const expectedByLocation = new Map(
+    expectedCoverage.map((coverage) => [coverage.locationIndex, coverage.indexes] as const),
+  );
+  const coveredByLocation = new Map<number, Set<number>>();
+  const add = (locationIndex: number, index: number): void => {
+    const covered = coveredByLocation.get(locationIndex) ?? new Set<number>();
+    covered.add(index);
+    coveredByLocation.set(locationIndex, covered);
+  };
+
+  if (plan.kind === "weather") {
+    for (const module of plan.modules) {
+      if (module.type !== "hourly") continue;
+      for (const index of module.hourIndexes) add(module.locationIndex, index);
+    }
+  } else if (plan.kind === "comparison") {
+    for (const module of plan.modules) {
+      if (
+        (!isWeatherComparisonTable(module) && !isWeatherComparisonChart(module)) ||
+        module.forecastKind !== "hourly"
+      ) {
+        continue;
+      }
+      const anchorIndex = module.locationIndexes[0];
+      const anchor = state.locations[anchorIndex];
+      if (!anchor) continue;
+      for (const locationIndex of module.locationIndexes) {
+        const location = state.locations[locationIndex];
+        if (!location) continue;
+        for (const forecastIndex of module.forecastIndexes ?? []) {
+          const alignedIndex = alignedForecastIndex(
+            anchor,
+            location,
+            "hourly",
+            forecastIndex,
+            prompt,
+          );
+          if (alignedIndex >= 0) add(locationIndex, alignedIndex);
+        }
+      }
+    }
+  }
+
+  for (let locationIndex = 0; locationIndex < state.locations.length; locationIndex += 1) {
+    const expected = expectedByLocation.get(locationIndex) ?? [];
+    if (expected.length === 0) {
+      issues.push(`Requested local forecast time is unavailable for location index ${locationIndex}.`);
+      continue;
+    }
+    const covered = coveredByLocation.get(locationIndex) ?? new Set<number>();
+    if (!expected.every((index) => covered.has(index))) {
+      issues.push(`Requested local forecast time is not covered for location index ${locationIndex}.`);
     }
   }
 }
@@ -1588,12 +2015,32 @@ function requestedPromptLocations(prompt: string | undefined): string[] {
   const candidates: string[] = [];
   const addList = (value: string | undefined): void => {
     if (!value) return;
-    candidates.push(...value.split(/,|\band\b|\bversus\b|\bvs\.?\b/i));
+    candidates.push(...value.split(/,\s*(?![A-Z]{2}\b)|\band\b|\bversus\b|\bvs\.?\b/i));
   };
   const score = /\b(?:score|rank)\s+(.+?)\s+(?:for|on|by|across|using)\b/i.exec(prompt)?.[1];
   addList(score);
   const chart = /\bchart\b.+?\bfor\s+(.+?)(?:\s+(?:on|this|next|over)\b|[?.]|$)/i.exec(prompt)?.[1];
   addList(chart);
+
+  const directWeatherLocationCandidate = /\b(?:weather|forecasts?|conditions?|temperatures?)\s+(?:like\s+)?(?:for|in|at)\s+(.+?)(?=\s+(?:right\s+now|today|tomorrow|this\s+week|next\s+week|at\s+\d|in\s+(?:celsius|fahrenheit|metric|imperial|°)|with\b|and\s+(?:call|show|include))|[?.]|$)/i.exec(
+    prompt,
+  )?.[1];
+  const directWeatherLocation = directWeatherLocationCandidate &&
+      !/^(?:(?:the\s+)?next|this|today|tomorrow|current|active|severe|any|celsius|fahrenheit|metric|imperial|\d|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(
+        directWeatherLocationCandidate.trim(),
+      ) &&
+      !/\b(?:hours?|days?|alerts?|warnings?|advisories)\b/i.test(directWeatherLocationCandidate)
+    ? directWeatherLocationCandidate
+    : undefined;
+  addList(directWeatherLocation);
+  const possessiveWeatherLocation = /^(?:show|display|check|give me)\s+([A-Z][A-Za-z .'-]{1,79}?)(?:'s)?\s+(?:(?:\w+|\d+)\s*[- ]day\s+)?(?:current\s+)?(?:weather|forecast|conditions?|outlook)\b/i.exec(
+    prompt.trim(),
+  )?.[1] ?? /\b([A-Z][A-Za-z .'-]{1,79}?)'s\s+(?:(?:\w+|\d+)\s*[- ]day\s+)?(?:weather|forecast|conditions?|outlook)\b/.exec(
+    prompt,
+  )?.[1];
+  if (!directWeatherLocation) {
+    addList(possessiveWeatherLocation?.replace(/^(?:show|display|check|give me)\s+/i, ""));
+  }
 
   const weatherFor = /(?:\bcompare\s+(?:the\s+)?(?:weather|forecasts?|conditions?|temperatures?)|^(?:the\s+)?(?:weather|forecasts?|conditions?|temperatures?))\s+(?:for|in|between)\s+(.+?)(?=[?.]|$)/i.exec(
     prompt,
@@ -1617,6 +2064,7 @@ function requestedPromptLocations(prompt: string | undefined): string[] {
   const locations = candidates.map((part) =>
     part
       .replace(/^\s*(?:compare\s+)?(?:the|a|an)\s+/i, "")
+      .replace(/^\s*(?:show|display|check|give me)\s+/i, "")
       .replace(/^\s*(?:weather|temperatures?|conditions?|forecasts?)\s+(?:for|in|between)\s+/i, "")
       .replace(/\s+(?:for|on|during|this|next|over|across)\s+.+$/i, "")
       .replace(
@@ -1637,15 +2085,15 @@ function requestedPromptLocations(prompt: string | undefined): string[] {
 }
 
 function evidenceLocationIndex(state: WeatherState, requested: string): number {
-  const normalizedRequested = normalizeLocationLabel(requested);
-  const requestedCity = normalizedRequested.split(" ")[0] ?? normalizedRequested;
+  const normalizedRequested = normalizeLocationLabel(sanitizePlanText(requested)).replace(/\s+city$/, "");
   return state.locations.findIndex((location) => {
-    const normalizedEvidence = normalizeLocationLabel(location.location.name);
-    const evidenceCity = normalizedEvidence.split(" ")[0] ?? normalizedEvidence;
+    const normalizedEvidence = normalizeLocationLabel(
+      sanitizePlanText(location.location.name),
+    ).replace(/\s+city$/, "");
     return (
-      normalizedEvidence.includes(normalizedRequested) ||
-      normalizedRequested.includes(normalizedEvidence) ||
-      evidenceCity === requestedCity
+      normalizedEvidence === normalizedRequested ||
+      normalizedEvidence.startsWith(`${normalizedRequested} `) ||
+      normalizedRequested.startsWith(`${normalizedEvidence} `)
     );
   });
 }
@@ -1656,23 +2104,64 @@ function requestedLocationCoverageIssues(
   state: WeatherState,
 ): string[] {
   if (state.locations.length === 0) return [];
-  const requested = new Set<string>(requestedPromptLocations(context.prompt));
+  const promptRequested = new Set<string>(requestedPromptLocations(context.prompt));
+  const argumentRequested = new Set<string>();
+  const argumentAliases = new Map<string, number>();
+  let resultOffset = 0;
   for (const record of context.evidence) {
-    for (const location of [record.arguments.location, ...(record.arguments.locations ?? [])]) {
-      if (location) requested.add(location);
+    const parsedResult = weatherResultSchema.safeParse(record.result);
+    const resultCount = parsedResult.success ? parsedResult.data.locations.length : 0;
+    const argumentLocations = record.arguments.locations?.length
+      ? record.arguments.locations
+      : record.arguments.location
+        ? [record.arguments.location]
+        : [];
+    for (const [argumentIndex, location] of argumentLocations.entries()) {
+      argumentRequested.add(location);
+      if (argumentLocations.length === resultCount) {
+        argumentAliases.set(normalizeLocationLabel(location), resultOffset + argumentIndex);
+      } else if (argumentLocations.length === 1 && resultCount === 1) {
+        argumentAliases.set(normalizeLocationLabel(location), resultOffset);
+      }
     }
+    resultOffset += resultCount;
   }
   const coveredIndexes = new Set(referencedLocationIndexes(plan));
   const issues: string[] = [];
-  for (const label of requested) {
-    const index = evidenceLocationIndex(state, label);
+  const validateLabel = (label: string, allowArgumentAlias: boolean): void => {
+    const directIndex = evidenceLocationIndex(state, label);
+    const index = directIndex >= 0
+      ? directIndex
+      : allowArgumentAlias
+        ? argumentAliases.get(normalizeLocationLabel(label)) ?? -1
+        : -1;
     if (index < 0) {
       issues.push(`Requested weather location is missing from evidence: ${label}.`);
     } else if (!coveredIndexes.has(index)) {
       issues.push(`Requested weather location is missing from the surface: ${label}.`);
     }
+  };
+  const normalizedArgumentLabels = new Set(
+    [...argumentRequested].map((label) => normalizeLocationLabel(label)),
+  );
+  for (const label of promptRequested) {
+    validateLabel(label, normalizedArgumentLabels.has(normalizeLocationLabel(label)));
+  }
+  for (const label of argumentRequested) {
+    if (!promptRequested.has(label)) validateLabel(label, true);
   }
   return issues;
+}
+
+function requestsTwoSidedResearchEvidence(prompt: string): boolean {
+  const normalized = prompt.toLocaleLowerCase("en-US");
+  const requestsSupport =
+    /\b(?:support(?:s|ed|ing)?|evidence\s+(?:for|supporting)|in\s+favor\s+of)\b/.test(normalized);
+  const requestsChallenge =
+    /\b(?:challeng(?:e|es|ed|ing)|evidence\s+against|against\s+(?:(?:the|this|that)\s+)?claim|counter[- ]?evidence|contradict(?:s|ed|ing)?)\b/.test(
+      normalized,
+    );
+  return requestsSupport && requestsChallenge;
 }
 
 function requestedCoverageIssues(
@@ -1688,15 +2177,7 @@ function requestedCoverageIssues(
   }
   issues.push(...requestedLocationCoverageIssues(plan, context, state));
 
-  const expectedUnit = /\b(celsius|metric|°c)\b/i.test(context.prompt ?? "")
-    ? "C"
-    : /\b(fahrenheit|imperial|°f)\b/i.test(context.prompt ?? "")
-      ? "F"
-      : context.clientContext?.units === "metric"
-        ? "C"
-        : context.clientContext?.units === "imperial"
-          ? "F"
-          : undefined;
+  const expectedUnit = requestedTemperatureUnit(context.prompt, context.clientContext);
   for (const index of coveredLocations) {
     const location = state.locations[index];
     if (location && expectedUnit && location.current.temperatureUnit !== expectedUnit) {
@@ -1707,13 +2188,66 @@ function requestedCoverageIssues(
   const requestedHours = requestedRange(context.prompt, "hour");
   const requestedDays = requestedDayCount(context.prompt, state);
   const requestedNamedDays = requestedSpecificDayIndexes(context.prompt, state);
+  const hasRequestedLocalTime = parseWeatherRequestIntent(context.prompt ?? "").localTime !== undefined;
   if (requestedHours) validateRequestedForecastRange(plan, "hourly", requestedHours, state, issues);
-  if (requestedDays) validateRequestedForecastRange(plan, "daily", requestedDays, state, issues);
-  validateRequestedSpecificDays(plan, requestedNamedDays, state, issues);
+  if (requestedDays && !hasRequestedLocalTime) {
+    validateRequestedForecastRange(plan, "daily", requestedDays, state, issues);
+  }
+  if (!hasRequestedLocalTime) validateRequestedSpecificDays(plan, requestedNamedDays, state, issues);
+  validateRequestedLocalHourCoverage(plan, context.prompt, state, issues);
   issues.push(...activityRecommendationCoverageIssues(plan, context, state));
 
+  if (plan.kind === "weather" && context.prompt) {
+    const requestedSignal = /\b(wettest|driest|warmest|coolest)\b/i.exec(context.prompt)?.[1]
+      ?.toLocaleLowerCase("en-US");
+    if (
+      requestedSignal &&
+      !plan.modules.some(
+        (module) =>
+          module.type === "recommendation" &&
+          "signal" in module &&
+          module.signal === requestedSignal,
+      )
+    ) {
+      issues.push(`Requested ${requestedSignal}-day recommendation is not covered.`);
+    }
+
+    const asksForAlerts = /\b(?:alerts?|warnings?|advisories)\b/i.test(context.prompt);
+    const hasRenderableAlert = state.locations.some((location) =>
+      location.alerts.some((alert) => alert.severity !== "unknown")
+    );
+    if (
+      asksForAlerts &&
+      hasRenderableAlert &&
+      !plan.modules.some((module) => module.type === "alerts")
+    ) {
+      issues.push("Requested weather alerts are not covered.");
+    }
+  }
+
   if (plan.kind === "comparison" && context.prompt) {
-    const searchablePlan = JSON.stringify(plan.modules).toLocaleLowerCase("en-US");
+    const structuredComparisonContent: unknown[] = [];
+    for (const module of plan.modules) {
+      if (module.type === "sources") continue;
+      if (module.type === "summary") {
+        structuredComparisonContent.push(
+          "items" in module ? module.items : module.locationIndexes,
+        );
+      } else if (module.type === "table") {
+        structuredComparisonContent.push(
+          "columns" in module
+            ? [module.columns, module.rows]
+            : [module.metrics, module.metric, module.forecastKind],
+        );
+      } else {
+        structuredComparisonContent.push(
+          "labels" in module
+            ? [module.labels, module.series.map((series) => series.label), module.unit]
+            : [module.metric, module.forecastKind],
+        );
+      }
+    }
+    const searchablePlan = JSON.stringify(structuredComparisonContent).toLocaleLowerCase("en-US");
     for (const criterion of extractRequestedCriteria(context.prompt)) {
       const normalizedCriterion = criterion === "rain" ? "precipitation" : criterion;
       if (!searchablePlan.includes(normalizedCriterion)) {
@@ -1740,6 +2274,19 @@ function requestedCoverageIssues(
       }, 0);
       if (citedItems < required) issues.push(`Requested ${required} evidence items are not covered.`);
     }
+    if (requestsTwoSidedResearchEvidence(context.prompt)) {
+      const stances = new Set(
+        plan.modules.flatMap((module) =>
+          module.type === "evidence" ? module.items.map((item) => item.stance) : []
+        ),
+      );
+      if (!stances.has("support")) {
+        issues.push("Requested two-sided research claim is missing supporting evidence.");
+      }
+      if (!stances.has("challenge")) {
+        issues.push("Requested two-sided research claim is missing challenging evidence.");
+      }
+    }
   }
 
   return issues;
@@ -1758,11 +2305,14 @@ export type EvaluatedSurfacePlanQualityCode =
 export function evaluateSurfacePlanQuality(
   plan: SurfacePlan,
   context: SurfacePlanValidationContext,
+  spec: SurfaceSpec,
 ): Readonly<Record<EvaluatedSurfacePlanQualityCode, boolean>> {
   const moduleTypes = plan.modules.map((module) => module.type);
   const primary = plan.kind === "weather" ? "hero" : plan.kind === "comparison" ? "summary" : "lead";
   const sourceIndexes = moduleTypes.flatMap((type, index) => (type === "sources" ? [index] : []));
-  const recipe = SURFACE_RECIPES[plan.recipeId];
+  const definingModule = definingModuleForPlan(plan, context.prompt);
+  const requiredModuleIndex = moduleTypes.indexOf(definingModule);
+  const canonicalRequiredModuleIndex = definingModule === primary ? 0 : 1;
   const expectedRecipe = expectedRecipeForPrompt(
     context.prompt,
     plan.kind,
@@ -1779,11 +2329,16 @@ export function evaluateSurfacePlanQuality(
     uniqueStrings(sourceModule?.sourceIds ?? []) &&
     [...contentIds].every((id) => issuedIds.has(id) && sourceIds.has(id)) &&
     [...sourceIds].every((id) => issuedIds.has(id));
-  const budget = plan.density === "brief" ? 6 : plan.density === "balanced" ? 9 : 12;
+  const contentBudget = evaluateSurfaceContentBudget(
+    spec,
+    SURFACE_CONTENT_BUDGETS[plan.density],
+  ).passed;
 
   return Object.freeze({
     recipe_fit:
-      moduleTypes.includes(recipe.requiredModule) &&
+      moduleTypes.includes(definingModule) &&
+      requiredModuleIndex === canonicalRequiredModuleIndex &&
+      modulesFollowCanonicalOrder(plan, context.prompt) &&
       (expectedRecipe === undefined || plan.recipeId === expectedRecipe),
     answer_first: moduleTypes[0] === primary,
     sources_last: sourceIndexes.length === 1 && sourceIndexes[0] === moduleTypes.length - 1,
@@ -1792,14 +2347,14 @@ export function evaluateSurfacePlanQuality(
     chart_table_alignment:
       plan.kind !== "comparison" || comparisonChartTableAligned(plan),
     citation_coverage: citationCoverage,
-    content_budget:
-      plan.modules.length <= budget && estimatedCompiledNodeCount(plan) <= LIMITS.surfaceNodes,
+    content_budget: contentBudget,
   });
 }
 
 export function validateSurfacePlan(
   input: unknown,
   context: SurfacePlanValidationContext,
+  options: SurfacePlanValidationOptions = {},
 ): SurfacePlanValidationResult {
   const result = SurfacePlanSchema.safeParse(input);
   if (!result.success) {
@@ -1813,37 +2368,66 @@ export function validateSurfacePlan(
 
   const plan = result.data;
   const issues: string[] = [];
-  const recipe = SURFACE_RECIPES[plan.recipeId];
+  const enforceRecipe = (options.mode ?? "recipe-v2") === "recipe-v2";
   const moduleTypes = plan.modules.map((module) => module.type);
-  const compatibleModules = new Set<string>(recipe.compatibleModules);
-  for (const moduleType of moduleTypes) {
-    if (!compatibleModules.has(moduleType)) {
-      issues.push(`Module ${moduleType} is incompatible with recipe ${plan.recipeId}.`);
+  const primaryType = plan.kind === "weather" ? "hero" : plan.kind === "comparison" ? "summary" : "lead";
+  if (enforceRecipe) {
+    const recipe = SURFACE_RECIPES[plan.recipeId];
+    const definingModule = definingModuleForPlan(plan, context.prompt);
+    const compatibleModules = new Set<string>(recipe.compatibleModules);
+    for (const moduleType of moduleTypes) {
+      if (!compatibleModules.has(moduleType)) {
+        issues.push(`Module ${moduleType} is incompatible with recipe ${plan.recipeId}.`);
+      }
+    }
+    if (!moduleTypes.includes(definingModule)) {
+      issues.push(`Recipe ${plan.recipeId} requires a ${definingModule} module.`);
+    }
+
+    if (moduleTypes[0] !== primaryType) {
+      issues.push(`Recipe ${plan.recipeId} must place its answer-first ${primaryType} module first.`);
+    }
+    const primaryModule = plan.modules[0];
+    if (plan.kind === "weather" && primaryModule?.type === "hero") {
+      const expectedVariant = plan.recipeId === "weather.decision" ? "decision" : "snapshot";
+      if (primaryModule.variant !== expectedVariant) {
+        issues.push(`Recipe ${plan.recipeId} requires the ${expectedVariant} weather hero variant.`);
+      }
+    }
+    if (plan.kind === "comparison" && primaryModule?.type === "summary") {
+      const expectedVariant = plan.recipeId === "comparison.verdict" ? "verdict" : "balanced";
+      if (primaryModule.variant !== expectedVariant) {
+        issues.push(`Recipe ${plan.recipeId} requires the ${expectedVariant} comparison summary variant.`);
+      }
+    }
+    const requiredModuleIndex = moduleTypes.indexOf(definingModule);
+    const canonicalRequiredModuleIndex = definingModule === primaryType ? 0 : 1;
+    if (requiredModuleIndex >= 0 && requiredModuleIndex !== canonicalRequiredModuleIndex) {
+      issues.push(
+        `Recipe ${plan.recipeId} must place its defining ${definingModule} module ${
+          canonicalRequiredModuleIndex === 0 ? "first" : "immediately after the primary module"
+        }.`,
+      );
+    }
+    if (!modulesFollowCanonicalOrder(plan, context.prompt)) {
+      issues.push(`Recipe ${plan.recipeId} modules do not follow the canonical semantic order.`);
+    }
+
+    const expectedRecipe = expectedRecipeForPrompt(
+      context.prompt,
+      plan.kind,
+      context.evidence.length > 0,
+    );
+    if (expectedRecipe && plan.recipeId !== expectedRecipe) {
+      issues.push(`Recipe ${plan.recipeId} does not fit the requested ${expectedRecipe} intent.`);
     }
   }
-  if (!moduleTypes.includes(recipe.requiredModule)) {
-    issues.push(`Recipe ${plan.recipeId} requires a ${recipe.requiredModule} module.`);
-  }
 
-  const primaryType = plan.kind === "weather" ? "hero" : plan.kind === "comparison" ? "summary" : "lead";
   if (!moduleTypes.includes(primaryType)) {
-    issues.push(`Recipe ${plan.recipeId} requires an answer-first ${primaryType} module.`);
+    issues.push(`Surface content requires one primary ${primaryType} module.`);
   }
   if (moduleTypes.filter((type) => type === primaryType).length > 1) {
-    issues.push(`Recipe ${plan.recipeId} cannot contain competing primary modules.`);
-  }
-
-  if (moduleTypes[0] !== primaryType) {
-    issues.push(`Recipe ${plan.recipeId} must place its answer-first ${primaryType} module first.`);
-  }
-
-  const expectedRecipe = expectedRecipeForPrompt(
-    context.prompt,
-    plan.kind,
-    context.evidence.length > 0,
-  );
-  if (expectedRecipe && plan.recipeId !== expectedRecipe) {
-    issues.push(`Recipe ${plan.recipeId} does not fit the requested ${expectedRecipe} intent.`);
+    issues.push(`Surface content cannot contain competing ${primaryType} modules.`);
   }
 
   if (estimatedCompiledNodeCount(plan) > LIMITS.surfaceNodes) {
@@ -1878,15 +2462,7 @@ export function validateSurfacePlan(
   }
 
   const weatherBacked = state.locations.length > 0;
-  const expectedUnit = /\b(celsius|metric|°c)\b/i.test(context.prompt ?? "")
-    ? "C"
-    : /\b(fahrenheit|imperial|°f)\b/i.test(context.prompt ?? "")
-      ? "F"
-      : context.clientContext?.units === "metric"
-        ? "C"
-        : context.clientContext?.units === "imperial"
-          ? "F"
-          : undefined;
+  const expectedUnit = requestedTemperatureUnit(context.prompt, context.clientContext);
 
   const validateLocationIndexes = (indexes: readonly number[], label: string): void => {
     if (!uniqueValues(indexes)) issues.push(`${label} location references must be unique.`);
@@ -1955,7 +2531,13 @@ export function validateSurfacePlan(
           if (!day) {
             issues.push(`Daily recommendation evidence index ${module.dayIndex} is out of range.`);
           } else {
-            const values = location.daily.map((candidate) => {
+            const candidateIndexes = requestedDailyCandidateIndexes(
+              context.prompt,
+              state,
+              module.locationIndex,
+            );
+            const values = candidateIndexes.map((index) => {
+              const candidate = location.daily[index];
               if (module.signal === "wettest" || module.signal === "driest") {
                 return candidate.precipitationProbability;
               }
@@ -1964,8 +2546,11 @@ export function validateSurfacePlan(
             const target = module.signal === "driest" || module.signal === "coolest"
               ? Math.min(...values)
               : Math.max(...values);
-            const selected = values[module.dayIndex];
-            if (selected !== target) {
+            const selectedCandidateIndex = candidateIndexes.indexOf(module.dayIndex);
+            const selected = selectedCandidateIndex >= 0
+              ? values[selectedCandidateIndex]
+              : undefined;
+            if (selected === undefined || selected !== target) {
               issues.push(`Daily recommendation index ${module.dayIndex} is not the deterministic ${module.signal} day.`);
             }
           }
@@ -1995,6 +2580,13 @@ export function validateSurfacePlan(
       }
 
       if (!evidenceReferenced) {
+        if (
+          module.type === "summary" &&
+          "items" in module &&
+          module.items.filter((item) => item.recommended).length > 1
+        ) {
+          issues.push("Comparison summaries can recommend at most one option.");
+        }
         if (module.type === "table") {
           for (const row of module.rows) {
             if (row.length !== module.columns.length) {
@@ -2027,6 +2619,25 @@ export function validateSurfacePlan(
         ) {
           issues.push("Recommended weather location must be included in the comparison.");
         }
+        const deterministicWinner = deterministicWeatherRecommendedLocation(
+          context.prompt,
+          state,
+          module.locationIndexes,
+        );
+        if (
+          deterministicWinner !== undefined &&
+          module.recommendedLocationIndex !== undefined &&
+          module.recommendedLocationIndex !== deterministicWinner
+        ) {
+          issues.push("Recommended weather location does not match the deterministic evidence winner.");
+        }
+        if (
+          plan.recipeId === "comparison.verdict" &&
+          deterministicWinner !== undefined &&
+          module.recommendedLocationIndex === undefined
+        ) {
+          issues.push("Weather verdict must identify the deterministic evidence winner.");
+        }
       } else if (isWeatherComparisonTable(module)) {
         if (module.forecastKind === "current") {
           if (!module.metrics || module.metrics.length === 0 || module.metric || module.forecastIndexes) {
@@ -2042,11 +2653,11 @@ export function validateSurfacePlan(
           if (module.forecastIndexes && !uniqueValues(module.forecastIndexes)) {
             issues.push("Forecast table indexes must be unique.");
           }
-          validateWeatherForecastReferences(module, state, issues);
+          validateWeatherForecastReferences(module, state, issues, context.prompt);
         }
       } else if (isWeatherComparisonChart(module)) {
         if (!uniqueValues(module.forecastIndexes)) issues.push("Forecast chart indexes must be unique.");
-        validateWeatherForecastReferences(module, state, issues);
+        validateWeatherForecastReferences(module, state, issues, context.prompt);
       }
     }
 
@@ -2074,6 +2685,8 @@ interface CompileSurfacePlanInput {
   plan: SurfacePlan;
   retrieval: GeminiRetrievalResult;
   clientContext: ClientContext;
+  prompt?: string;
+  validationMode?: "recipe-v2" | "grammar-v3";
 }
 
 function formatDate(value: string, context: ClientContext, timeZone = context.timeZone): string {
@@ -2220,9 +2833,15 @@ function weatherForecastLabels(
   kind: "hourly" | "daily",
   indexes: readonly number[],
   clientContext: ClientContext,
+  prompt?: string,
   timeZone = location.current.timeZone,
   suffix = "",
 ): string[] {
+  const normalizedPrompt = prompt?.toLocaleLowerCase("en-US") ?? "";
+  const observedOrdinal = localCalendarOrdinal(
+    location.current.observedAt,
+    location.current.timeZone,
+  );
   return indexes.map((index) => {
     if (kind === "hourly") {
       const item = location.hourly[index];
@@ -2231,6 +2850,34 @@ function weatherForecastLabels(
     }
     const item = location.daily[index];
     if (!item) throw new TypeError("Validated weather comparison evidence is unavailable.");
+    const ordinal = dateOnlyOrdinal(item.date);
+    const offset = ordinal !== undefined && observedOrdinal !== undefined
+      ? ordinal - observedOrdinal
+      : undefined;
+    if (/\btomorrow\b/.test(normalizedPrompt) && offset === 1) return "Tomorrow";
+    if (/\btoday\b/.test(normalizedPrompt) && offset === 0) return "Today";
+    if (
+      /\b(?:weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(
+        normalizedPrompt,
+      )
+    ) {
+      try {
+        return new Intl.DateTimeFormat(clientContext.locale, {
+          weekday: "long",
+          timeZone: "UTC",
+        }).format(new Date(`${item.date}T12:00:00.000Z`));
+      } catch {
+        return item.date;
+      }
+    }
+    if (
+      /\b(?:next\s+(?:(?:\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?days?|this\s+week|next\s+week)\b/.test(
+        normalizedPrompt,
+      ) &&
+      offset !== undefined
+    ) {
+      return offset === 0 ? "Today" : offset === 1 ? "Tomorrow" : `In ${offset} days`;
+    }
     return formatDate(item.date, clientContext);
   });
 }
@@ -2265,9 +2912,10 @@ function alignedWeatherForecastValue(
   kind: "hourly" | "daily",
   anchorIndex: number,
   metric: z.infer<typeof weatherForecastMetricSchema>,
+  prompt?: string,
 ): number {
-  const index = alignedForecastIndex(anchor, location, kind, anchorIndex);
-  if (index < 0) throw new TypeError("Validated date-aligned weather comparison evidence is unavailable.");
+  const index = alignedForecastIndex(anchor, location, kind, anchorIndex, prompt);
+  if (index < 0) throw new TypeError("Validated weather comparison evidence is unavailable.");
   return weatherForecastValue(location, kind, index, metric);
 }
 
@@ -2280,7 +2928,14 @@ function weatherForecastUnit(
 
 function weatherComparisonAxis(
   locations: readonly WeatherLocationEvidence[],
+  prompt?: string,
 ): { timeZone: string; suffix: string } {
+  if (parseWeatherRequestIntent(prompt ?? "").localTime !== undefined) {
+    return {
+      timeZone: locations[0]?.current.timeZone ?? "UTC",
+      suffix: " local",
+    };
+  }
   const timeZones = new Set(locations.map((location) => location.current.timeZone));
   return timeZones.size === 1
     ? { timeZone: locations[0]?.current.timeZone ?? "UTC", suffix: "" }
@@ -2327,11 +2982,15 @@ export function compileSurfacePlan({
   plan,
   retrieval,
   clientContext,
+  prompt,
+  validationMode,
 }: CompileSurfacePlanInput): SurfaceSpec {
   const validation = validateSurfacePlan(plan, {
     sources: retrieval.sources,
     evidence: retrieval.evidence,
-  });
+    prompt,
+    clientContext,
+  }, { mode: validationMode });
   if (!validation.success) {
     throw new TypeError(`Cannot compile invalid SurfacePlan: ${validation.issues.join(" ")}`);
   }
@@ -2396,7 +3055,14 @@ export function compileSurfacePlan({
       if (module.type === "metrics") {
         const metricIds = module.metrics.map((_, index) => `${baseId}-${index + 1}`);
         roots.push(baseId);
-        body.push({ id: baseId, component: "Rail", children: metricIds, label: "Conditions" });
+        body.push({
+          id: baseId,
+          component: "Rail",
+          children: metricIds,
+          label: weatherState.locations.length > 1
+            ? `${location.location.name} conditions`
+            : "Conditions",
+        });
         module.metrics.forEach((metric, index) => {
           body.push(metricNode(metricIds[index], metric, location.current));
         });
@@ -2514,10 +3180,31 @@ export function compileSurfacePlan({
     if (trustedPlan.kind === "comparison") {
       if (module.type === "summary") {
         roots.push(baseId);
+        const localHourCoverage = requestedLocalHourCoverage(prompt ?? "", weatherState.locations);
         const items = isWeatherComparisonSummary(module)
           ? module.locationIndexes.map((index) => {
               const location = weatherState.locations[index];
               if (!location) throw new TypeError("Validated weather comparison location is unavailable.");
+              const localHourIndex = localHourCoverage.find(
+                (coverage) => coverage.locationIndex === index,
+              )?.indexes[0];
+              const localHour = localHourIndex === undefined
+                ? undefined
+                : location.hourly[localHourIndex];
+              if (localHour) {
+                return {
+                  label: location.location.name,
+                  value: `${localHour.temperature}°${localHour.temperatureUnit}`,
+                  detail: localHour.precipitationProbability === null
+                    ? `${formatTime(localHour.startTime, clientContext, location.current.timeZone)} local forecast`
+                    : `${localHour.precipitationProbability}% precipitation · ${formatTime(
+                        localHour.startTime,
+                        clientContext,
+                        location.current.timeZone,
+                      )} local`,
+                  recommended: module.recommendedLocationIndex === index,
+                };
+              }
               return {
                 label: location.location.name,
                 value: `${location.current.temperature}°${location.current.temperatureUnit} · ${location.current.conditionText}`,
@@ -2561,12 +3248,13 @@ export function compileSurfacePlan({
           if (!metric || locations.length === 0) {
             throw new TypeError("Validated weather comparison table references are unavailable.");
           }
-          const axis = weatherComparisonAxis(locations);
+          const axis = weatherComparisonAxis(locations, prompt);
           const labels = weatherForecastLabels(
             locations[0],
             forecastKind,
             indexes,
             clientContext,
+            prompt,
             axis.timeZone,
             axis.suffix,
           );
@@ -2584,6 +3272,7 @@ export function compileSurfacePlan({
                   forecastKind,
                   indexes[labelIndex],
                   metric,
+                  prompt,
                 );
                 return `${value}${weatherForecastUnit(location, metric)}`;
               }),
@@ -2609,7 +3298,7 @@ export function compileSurfacePlan({
           if (locations.length === 0) {
             throw new TypeError("Validated weather comparison chart references are unavailable.");
           }
-          const axis = weatherComparisonAxis(locations);
+          const axis = weatherComparisonAxis(locations, prompt);
           body.push({
             id: baseId,
             component: "ComparisonChart",
@@ -2619,6 +3308,7 @@ export function compileSurfacePlan({
               module.forecastKind,
               module.forecastIndexes,
               clientContext,
+              prompt,
               axis.timeZone,
               axis.suffix,
             ),
@@ -2631,6 +3321,7 @@ export function compileSurfacePlan({
                   module.forecastKind,
                   index,
                   module.metric,
+                  prompt,
                 ),
               ),
             })),
@@ -2709,15 +3400,34 @@ interface BuildFallbackSurfacePlanInput {
   clientContext: ClientContext;
 }
 
+function sanitizePlanText(value: string): string {
+  const removeAll = (input: string, pattern: RegExp): string =>
+    input.replace(new RegExp(pattern.source, `${pattern.flags}g`), " ");
+  return removeAll(
+    removeAll(removeAll(value, MARKUP_LIKE_TAG_PATTERN), EXECUTABLE_URL_SCHEME_PATTERN),
+    RAW_PLAN_URL_PATTERN,
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function limited(value: string, maximum: number, fallback: string): string {
-  const normalized = value.trim().replace(/\s+/g, " ");
-  return (normalized || fallback).slice(0, maximum).trim() || fallback;
+  const safeFallback = sanitizePlanText(fallback);
+  const normalized = sanitizePlanText(value);
+  const candidate = (normalized || safeFallback).slice(0, maximum).trim() || safeFallback;
+  if (!candidate || !isSafePlanText(candidate)) {
+    throw new TypeError("Deterministic fallback text is outside the safe SurfacePlan boundary.");
+  }
+  return candidate;
 }
 
 function comparisonLabels(prompt: string): readonly [string, string] {
   const normalized = prompt.trim().replace(/[?.!]+$/, "");
-  const match = normalized.match(
-    /(?:compare\s+)?(.+?)\s+(?:and|vs\.?|versus)\s+(.+)$/i,
+  const commandBody = normalized
+    .replace(/^(?:please\s+)?(?:compare|score|rank)\s+/i, "")
+    .replace(/^.*?:\s*/, "");
+  const match = commandBody.match(
+    /^(.+?)\s+(?:and|or|vs\.?|versus)\s+(.+?)(?=\s+(?:on|by|across|using|with|for|in\s+terms\s+of)\b|$)/i,
   );
   if (!match) return ["First option", "Second option"];
   return [
@@ -2726,11 +3436,73 @@ function comparisonLabels(prompt: string): readonly [string, string] {
   ];
 }
 
-export function buildFallbackSurfacePlan({
-  kind,
-  prompt,
-  retrieval,
-}: BuildFallbackSurfacePlanInput): SurfacePlan {
+function rangeWord(value: number): string {
+  return [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+  ][value] ?? String(value);
+}
+
+function requestedWeekdayLabel(prompt: string): string | undefined {
+  const weekdays = [
+    ...prompt.matchAll(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi),
+  ].map((match) => `${match[1][0].toLocaleUpperCase("en-US")}${match[1].slice(1).toLocaleLowerCase("en-US")}`);
+  const unique = [...new Set(weekdays)];
+  return unique.length >= 2 ? unique.join("–") : undefined;
+}
+
+function fallbackActivityHourIndexes(
+  location: WeatherLocationEvidence,
+  window: ActivityWindowEvidence,
+): number[] {
+  const start = Date.parse(window.startTime);
+  const end = Date.parse(window.endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+  const indexes = location.hourly.flatMap((hour, index) => {
+    const timestamp = Date.parse(hour.startTime);
+    return timestamp >= start - 3_600_000 && timestamp < end ? [index] : [];
+  });
+  if (indexes.length >= 2 || location.hourly.length < 2) return indexes.slice(0, 24);
+
+  const nearest = location.hourly
+    .map((hour, index) => ({ index, distance: Math.abs(Date.parse(hour.startTime) - start) }))
+    .filter((entry) => Number.isFinite(entry.distance))
+    .sort((left, right) => left.distance - right.distance || left.index - right.index);
+  for (const entry of nearest) {
+    if (!indexes.includes(entry.index)) indexes.push(entry.index);
+    if (indexes.length >= 2) break;
+  }
+  return indexes.sort((left, right) => left - right).slice(0, 24);
+}
+
+function validatedFallbackPlan(
+  input: BuildFallbackSurfacePlanInput,
+  candidate: unknown,
+): SurfacePlan {
+  const parsed = SurfacePlanSchema.parse(candidate);
+  const validation = validateSurfacePlan(parsed, {
+    sources: input.retrieval.sources,
+    evidence: input.retrieval.evidence,
+    prompt: input.prompt,
+    clientContext: input.clientContext,
+  });
+  if (!validation.success) {
+    throw new TypeError(`Cannot build valid ${input.kind} fallback: ${validation.issues.join(" ")}`);
+  }
+  return validation.plan;
+}
+
+export function buildFallbackSurfacePlan(input: BuildFallbackSurfacePlanInput): SurfacePlan {
+  const { kind, prompt, retrieval } = input;
   const sourceIds = retrieval.sources.slice(0, LIMITS.sources).map((source) => source.id);
   if (sourceIds.length === 0) {
     throw new TypeError(`${kind} fallback requires at least one issued source.`);
@@ -2738,31 +3510,181 @@ export function buildFallbackSurfacePlan({
 
   if (kind === "weather") {
     const state = readWeatherState(retrieval.evidence);
+    const weatherRecipeId = expectedRecipeForPrompt(prompt, "weather", true) ?? "weather.snapshot";
+    if (state.locations.length > 1 && weatherRecipeId === "weather.snapshot") {
+      return buildFallbackSurfacePlan({ ...input, kind: "comparison" });
+    }
     const location = state.locations[0];
     if (!location) throw new TypeError("A weather fallback requires normalized weather evidence.");
+    const recipeId = weatherRecipeId;
+    const requestIntent = parseWeatherRequestIntent(prompt);
+    const localHourCoverage = requestedLocalHourCoverage(prompt, state.locations);
+    const asksForAlerts = /\b(?:alerts?|warnings?|advisories)\b/i.test(prompt);
     const modules: Array<z.infer<typeof weatherModuleSchema>> = [
       {
         type: "hero",
-        variant: "snapshot",
+        variant: recipeId === "weather.decision" ? "decision" : "snapshot",
         locationIndex: 0,
         recommendationLabel: "Current conditions",
-        recommendationValue: location.current.conditionText,
-        recommendationDetail: `Provider-observed conditions for ${location.location.name}.`,
+        recommendationValue: limited(location.current.conditionText, 120, "Provider conditions"),
+        recommendationDetail: limited(
+          `Provider-observed conditions for ${location.location.name}.`,
+          240,
+          "Provider-observed conditions.",
+        ),
       },
     ];
-    for (let locationIndex = 0; locationIndex < state.locations.length; locationIndex += 1) {
-      modules.push({
-        type: "metrics",
-        locationIndex,
-        metrics: ["feelsLike", "humidity", "wind", "precipitation"],
+
+    if (recipeId === "weather.decision") {
+      const decisions = state.locations.flatMap((candidateLocation, locationIndex) => {
+        const activityWindowIndex = state.activityWindows.findIndex((window) =>
+          locationsMatch(candidateLocation.location, window.location)
+        );
+        return activityWindowIndex < 0
+          ? []
+          : [{ candidateLocation, locationIndex, activityWindowIndex }];
+      });
+      if (decisions.length === 0) {
+        throw new TypeError("A weather decision fallback requires a deterministic activity window.");
+      }
+      for (const decision of decisions) {
+        modules.push({
+          type: "recommendation",
+          locationIndex: decision.locationIndex,
+          activityWindowIndex: decision.activityWindowIndex,
+        });
+      }
+      for (const decision of decisions) {
+        const hourIndexes = fallbackActivityHourIndexes(
+          decision.candidateLocation,
+          state.activityWindows[decision.activityWindowIndex],
+        );
+        if (hourIndexes.length === 0) continue;
+        modules.push({
+          type: "hourly",
+          variant: "chart",
+          label: state.locations.length > 1
+            ? limited(
+                `${decision.candidateLocation.location.name} around the recommended window`,
+                80,
+                "Conditions around the recommended window",
+              )
+            : "Conditions around the recommended window",
+          locationIndex: decision.locationIndex,
+          hourIndexes,
+        });
+      }
+    } else if (recipeId === "weather.outlook") {
+      const requestedHours = requestIntent.forecastHours;
+      if (requestedHours !== undefined || requestIntent.localTime !== undefined) {
+        state.locations.forEach((candidateLocation, locationIndex) => {
+          const hourIndexes = [...new Set([
+            ...(requestedHours === undefined
+              ? []
+              : candidateLocation.hourly
+                  .slice(0, Math.min(requestedHours, 24))
+                  .map((_, index) => index)),
+            ...(localHourCoverage.find(
+              (coverage) => coverage.locationIndex === locationIndex,
+            )?.indexes ?? []),
+          ])].slice(0, 24);
+          if (hourIndexes.length === 0) return;
+          const rangeLabel = requestIntent.localTime
+            ? `${requestIntent.localTime} local outlook`
+            : `${rangeWord(hourIndexes.length)}-hour outlook`;
+          modules.push({
+            type: "hourly",
+            variant: "chart",
+            label: state.locations.length > 1
+              ? limited(
+                  `${candidateLocation.location.name} · ${rangeLabel}`,
+                  80,
+                  rangeLabel,
+                )
+              : rangeLabel,
+            locationIndex,
+            hourIndexes,
+          });
+        });
+      } else {
+        const requestedIndexes = requestedSpecificDayIndexes(prompt, state).filter(
+          (index) => index >= 0,
+        );
+        const dayIndexesByLocation = state.locations.map((candidateLocation, locationIndex) => {
+          const count = requestedDayCount(prompt, state) ?? Math.min(3, candidateLocation.daily.length);
+          const dayIndexes = requestedIndexes.length > 0
+            ? [...new Set(requestedIndexes)].filter((index) => index < candidateLocation.daily.length)
+            : candidateLocation.daily.slice(0, count).map((_, index) => index);
+          if (dayIndexes.length > 0) {
+            modules.push({
+              type: "daily",
+              variant: "table",
+              label: state.locations.length > 1
+                ? limited(
+                    `${candidateLocation.location.name} · ${rangeWord(dayIndexes.length)}-day outlook`,
+                    80,
+                    `${rangeWord(dayIndexes.length)}-day outlook`,
+                  )
+                : `${rangeWord(dayIndexes.length)}-day outlook`,
+              locationIndex,
+              dayIndexes,
+            });
+          }
+          return dayIndexes;
+        });
+        const signal = /\b(wettest|driest|warmest|coolest)\b/i.exec(prompt)?.[1]
+          ?.toLocaleLowerCase("en-US") as z.infer<typeof weatherDailyRecommendationModuleSchema>["signal"] | undefined;
+        const dayIndexes = dayIndexesByLocation[0] ?? [];
+        if (signal && dayIndexes.length > 0) {
+          const valueFor = (index: number): number => {
+            const day = location.daily[index];
+            if (signal === "wettest" || signal === "driest") {
+              return day.precipitationProbability;
+            }
+            return signal === "warmest" ? day.high : day.low;
+          };
+          const dayIndex = dayIndexes.reduce((best, index) => {
+            const value = valueFor(index);
+            const bestValue = valueFor(best);
+            return signal === "driest" || signal === "coolest"
+              ? value < bestValue ? index : best
+              : value > bestValue ? index : best;
+          });
+          modules.push({ type: "recommendation", locationIndex: 0, dayIndex, signal });
+        }
+      }
+    } else {
+      if (!asksForAlerts) {
+        state.locations.forEach((_, locationIndex) => {
+          modules.push({
+            type: "metrics",
+            locationIndex,
+            metrics: ["humidity", "wind"],
+          });
+        });
+      }
+    }
+    if (asksForAlerts) {
+      state.locations.forEach((candidateLocation, locationIndex) => {
+        const alertIndexes = candidateLocation.alerts.flatMap((alert, index) =>
+          alert.severity === "unknown" ? [] : [index]
+        ).slice(0, 8);
+        if (alertIndexes.length > 0) {
+          modules.push({ type: "alerts", locationIndex, alertIndexes });
+        }
       });
     }
     modules.push({ type: "sources", label: "Weather source", sourceIds });
-    return SurfacePlanSchema.parse({
+    return validatedFallbackPlan(input, {
       kind: "weather",
-      recipeId: "weather.snapshot",
-      density: "brief",
-      emphasis: "answer",
+      recipeId,
+      density:
+        recipeId === "weather.snapshot"
+          ? "brief"
+          : recipeId === "weather.outlook" && /\b(?:wettest|driest|warmest|coolest)\b/i.test(prompt)
+            ? "detailed"
+            : "balanced",
+      emphasis: recipeId === "weather.decision" ? "decision" : recipeId === "weather.outlook" ? "trend" : "answer",
       modules,
     });
   }
@@ -2771,28 +3693,146 @@ export function buildFallbackSurfacePlan({
     const state = readWeatherState(retrieval.evidence);
     if (state.locations.length >= 2) {
       const locationIndexes = state.locations.map((_, index) => index);
-      return SurfacePlanSchema.parse({
-        kind: "comparison",
-        recipeId: "comparison.verdict",
-        density: "brief",
-        emphasis: "decision",
-        modules: [
-          {
-            type: "summary",
-            variant: "verdict",
-            title: "Weather comparison",
-            recommendation: "Provider-observed conditions are shown side by side without a generated winner.",
+      const requestIntent = parseWeatherRequestIntent(prompt);
+      const localHourCoverage = requestedLocalHourCoverage(prompt, state.locations);
+      const localAnchorHourIndexes = localHourCoverage.find(
+        (coverage) => coverage.locationIndex === 0,
+      )?.indexes ?? [];
+      const recipeId = expectedRecipeForPrompt(prompt, "comparison", true) ?? "comparison.verdict";
+      const deterministicWinner = deterministicWeatherRecommendedLocation(
+        prompt,
+        state,
+        locationIndexes,
+      );
+      const summary = {
+        type: "summary" as const,
+        variant: recipeId === "comparison.verdict" ? "verdict" as const : "balanced" as const,
+        title: recipeId === "comparison.trend" ? "Weather trend comparison" : "Weather comparison",
+        recommendation: deterministicWinner === undefined
+          ? "Provider-observed conditions are shown side by side without a generated winner."
+          : limited(
+              `The requested provider evidence favors ${state.locations[deterministicWinner].location.name}.`,
+              400,
+              "The requested provider evidence identifies a preferred location.",
+            ),
+        locationIndexes,
+        ...(deterministicWinner === undefined
+          ? {}
+          : { recommendedLocationIndex: deterministicWinner }),
+        sourceIds,
+      };
+      if (recipeId === "comparison.trend") {
+        const requestedHourCount = requestIntent.forecastHours;
+        const forecastKind = requestedHourCount === undefined && requestIntent.localTime === undefined
+          ? "daily" as const
+          : "hourly" as const;
+        const specificallyRequested = requestedSpecificDayIndexes(prompt, state).filter(
+          (index) => index >= 0,
+        );
+        const requestedDayCount = requestedRange(prompt, "day");
+        const forecastIndexes = forecastKind === "hourly"
+          ? [...new Set([
+              ...(requestedHourCount === undefined
+                ? []
+                : state.locations[0].hourly
+                    .slice(0, Math.min(requestedHourCount, 24))
+                    .map((_, index) => index)),
+              ...localAnchorHourIndexes,
+            ])].slice(0, 24)
+          : specificallyRequested.length > 0
+            ? specificallyRequested
+            : state.locations[0].daily.slice(0, requestedDayCount ?? 2).map((_, index) => index);
+        const metric: z.infer<typeof weatherForecastMetricSchema> = forecastKind === "hourly"
+          ? /\b(?:rain|precipitation)\b/i.test(prompt) ? "precipitation" : "temperature"
+          : /\blows?\b/i.test(prompt)
+            ? "low"
+            : /\b(?:rain|precipitation)\b/i.test(prompt)
+              ? "precipitation"
+              : "high";
+        const weekdayLabel = requestedWeekdayLabel(prompt);
+        const rangeLabel = weekdayLabel ?? `${rangeWord(forecastIndexes.length)}-${forecastKind === "hourly" ? "hour" : "day"}`;
+        return validatedFallbackPlan(input, {
+          kind: "comparison",
+          recipeId,
+          density: "detailed",
+          emphasis: "trend",
+          modules: [
+            summary,
+            {
+              type: "chart",
+              variant: "line",
+              title: `${rangeLabel} ${metric === "precipitation" ? "precipitation" : `${metric} temperature`} trend`,
+              locationIndexes,
+              forecastKind,
+              forecastIndexes,
+              metric,
+              sourceIds,
+            },
+            {
+              type: "table",
+              caption: `${rangeLabel} trend data`,
+              locationIndexes,
+              forecastKind,
+              forecastIndexes,
+              metric,
+              sourceIds,
+            },
+            { type: "sources", label: "Weather sources", sourceIds },
+          ],
+        });
+      }
+      const specificallyRequested = requestedSpecificDayIndexes(prompt, state).filter(
+        (index) => index >= 0,
+      );
+      const requestedCount = requestedRange(prompt, "day");
+      const forecastIndexes = specificallyRequested.length > 0
+        ? specificallyRequested
+        : requestedCount
+          ? state.locations[0].daily.slice(0, requestedCount).map((_, index) => index)
+          : [];
+      const forecastMetric: z.infer<typeof weatherForecastMetricSchema> = /\blows?\b/i.test(prompt)
+        ? "low"
+        : /\b(?:rain|precipitation|picnic|brunch|outdoor)\b/i.test(prompt)
+          ? "precipitation"
+          : "high";
+      const comparisonTable = localAnchorHourIndexes.length > 0
+        ? {
+            type: "table" as const,
+            caption: "Requested local-time weather",
             locationIndexes,
+            forecastKind: "hourly" as const,
+            forecastIndexes: localAnchorHourIndexes,
+            metric: /\b(?:rain|precipitation)\b/i.test(prompt)
+              ? "precipitation" as const
+              : "temperature" as const,
             sourceIds,
-          },
-          {
-            type: "table",
+          }
+        : forecastIndexes.length > 0
+        ? {
+            type: "table" as const,
+            caption: `${requestedWeekdayLabel(prompt) ?? "Requested day"} weather`,
+            locationIndexes,
+            forecastKind: "daily" as const,
+            forecastIndexes,
+            metric: forecastMetric,
+            sourceIds,
+          }
+        : {
+            type: "table" as const,
             caption: "Current conditions",
             locationIndexes,
-            forecastKind: "current",
-            metrics: ["temperature", "feelsLike", "precipitation", "wind"],
+            forecastKind: "current" as const,
+            metrics: ["temperature", "feelsLike", "precipitation", "wind"] as const,
             sourceIds,
-          },
+          };
+      return validatedFallbackPlan(input, {
+        kind: "comparison",
+        recipeId,
+        density: recipeId === "comparison.scorecard" ? "balanced" : "brief",
+        emphasis: recipeId === "comparison.scorecard" ? "answer" : "decision",
+        modules: [
+          summary,
+          comparisonTable,
           { type: "sources", label: "Weather sources", sourceIds },
         ],
       });
@@ -2803,52 +3843,104 @@ export function buildFallbackSurfacePlan({
       400,
       "The available evidence does not support a single clear winner.",
     );
-    return SurfacePlanSchema.parse({
-      kind: "comparison",
-      recipeId: "comparison.verdict",
-      density: "brief",
-      emphasis: "decision",
-      modules: [
+    const recipeId = expectedRecipeForPrompt(prompt, "comparison", false) ?? "comparison.verdict";
+    if (recipeId === "comparison.trend") {
+      throw new TypeError("A search-backed trend fallback requires structured numeric evidence.");
+    }
+    const summary = {
+      type: "summary" as const,
+      variant: recipeId === "comparison.verdict" ? "verdict" as const : "balanced" as const,
+      title: limited(
+        recipeId === "comparison.scorecard"
+          ? `${first} and ${second} scorecard`
+          : `${first} compared with ${second}`,
+        180,
+        recipeId === "comparison.scorecard" ? "Comparison scorecard" : "Comparison verdict",
+      ),
+      recommendation,
+      items: [
         {
-          type: "summary",
-          variant: "verdict",
-          title: limited(`${first} compared with ${second}`, 180, "Comparison verdict"),
-          recommendation,
-          items: [
-            {
-              label: first,
-              value: "Evidence available",
-              detail: limited(retrieval.sources[0]?.title ?? "Primary source", 220, "Primary source"),
-              recommended: false,
-            },
-            {
-              label: second,
-              value: "Evidence available",
-              detail: limited(retrieval.sources[1]?.title ?? "Additional source", 220, "Additional source"),
-              recommended: false,
-            },
-          ],
-          sourceIds,
+          label: first,
+          value: "Evidence available",
+          detail: limited(retrieval.sources[0]?.title ?? "Primary source", 220, "Primary source"),
+          recommended: false,
         },
-        { type: "sources", label: "Sources", sourceIds },
+        {
+          label: second,
+          value: "Evidence available",
+          detail: limited(retrieval.sources[1]?.title ?? "Additional source", 220, "Additional source"),
+          recommended: false,
+        },
       ],
+      sourceIds,
+    };
+    const modules: Array<z.infer<typeof comparisonModuleSchema>> = [summary];
+    if (recipeId === "comparison.scorecard") {
+      const criteria = extractRequestedCriteria(prompt);
+      const criterionRows = (criteria.length > 0 ? criteria : ["Available evidence"]).map(
+        (criterion) => [
+          limited(criterion, 80, "Criterion"),
+          "Not deterministically scored",
+          "Not deterministically scored",
+        ],
+      );
+      modules.push({
+        type: "table",
+        caption: "Requested criteria without invented scores",
+        columns: ["Criterion", first, second],
+        rows: criterionRows,
+        sourceIds,
+      });
+    }
+    modules.push({ type: "sources", label: "Sources", sourceIds });
+    return validatedFallbackPlan(input, {
+      kind: "comparison",
+      recipeId,
+      density: recipeId === "comparison.scorecard" ? "balanced" : "brief",
+      emphasis: recipeId === "comparison.scorecard" ? "answer" : "decision",
+      modules,
     });
   }
 
-  return SurfacePlanSchema.parse({
+  const recipeId = expectedRecipeForPrompt(prompt, "research") ?? "research.brief";
+  const lead = {
+    type: "lead" as const,
+    variant: recipeId === "research.brief" ? "brief" as const : "feature" as const,
+    title: limited(prompt, 220, "Research brief"),
+    summary: limited(retrieval.outputText, 1_200, "The available sources provide a bounded research answer."),
+    sourceIds,
+  };
+  const modules: Array<z.infer<typeof researchModuleSchema>> = [lead];
+  if (recipeId === "research.timeline") {
+    modules.push({
+      type: "timeline",
+      label: "Available source chronology",
+      items: retrieval.sources.slice(0, LIMITS.sources).map((source) => ({
+        date: "Date not established",
+        title: limited(source.title, 180, "Issued source"),
+        detail: "The retrieved evidence does not establish a trustworthy event date for this source.",
+        sourceId: source.id,
+      })),
+    });
+  } else if (recipeId === "research.claims" || /\b(?:evidence|sources?)\b/i.test(prompt)) {
+    modules.push({
+      type: "evidence",
+      variant: "stack",
+      label: "Available evidence",
+      items: retrieval.sources.slice(0, LIMITS.sources).map((source) => ({
+        title: limited(source.title, 180, "Issued source"),
+        finding: limited(source.title, 400, "Issued source"),
+        stance: "neutral" as const,
+        sourceId: source.id,
+      })),
+    });
+  }
+  modules.push({ type: "sources", label: "Sources", sourceIds });
+  return validatedFallbackPlan(input, {
     kind: "research",
-    recipeId: "research.brief",
-    density: "brief",
-    emphasis: "answer",
-    modules: [
-      {
-        type: "lead",
-        variant: "brief",
-        title: limited(prompt, 220, "Research brief"),
-        summary: limited(retrieval.outputText, 1_200, "The available sources provide a bounded research answer."),
-        sourceIds,
-      },
-      { type: "sources", label: "Sources", sourceIds },
-    ],
+    recipeId,
+    density: recipeId === "research.brief" ? "brief" : "detailed",
+    emphasis: recipeId === "research.timeline" ? "trend" : recipeId === "research.claims" ? "evidence" : "answer",
+    modules,
   });
 }

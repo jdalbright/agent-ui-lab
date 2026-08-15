@@ -327,6 +327,12 @@ function canonicalNode(
     case "Band":
     case "Split":
     case "Rail":
+    case "Stack":
+    case "Grid":
+    case "Section":
+    case "Card":
+    case "Tabs":
+    case "Disclosure":
       throw new Error(`Layout component ${component} cannot be a canonical leaf.`);
   }
 }

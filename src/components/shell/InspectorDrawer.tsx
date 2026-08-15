@@ -29,8 +29,10 @@ export interface SafeValidationSummary {
 export interface SafeQualityCheck {
   code:
     | "recipe_fit"
+    | "graph_integrity"
     | "answer_first"
     | "sources_last"
+    | "sources_visible"
     | "requested_coverage"
     | "duplicate_primary"
     | "chart_table_alignment"
@@ -68,10 +70,25 @@ export interface SafeTraceEntry {
     | "research.timeline"
     | "research.claims";
   density?: "brief" | "balanced" | "detailed";
-  emphasis?: "answer" | "decision" | "trend" | "evidence" | "risk";
+  emphasis?: "answer" | "decision" | "trend" | "evidence" | "risk" | "exploration";
   qualityChecks?: readonly SafeQualityCheck[];
   repairCategory?: "none" | "semantic";
   compilerResult?: "compiled" | "deterministic-fallback";
+  compositionMode?: "plan-v2" | "grammar-v3";
+  layoutFamily?:
+    | "stack"
+    | "grid"
+    | "split"
+    | "section"
+    | "card"
+    | "rail"
+    | "tabs"
+    | "disclosure"
+    | "divider"
+    | "plan-v2-fallback"
+    | "unknown";
+  contentNodeCount?: number;
+  layoutNodeCount?: number;
 }
 
 /** A content-free summary of one trusted component in the rendered answer tree. */

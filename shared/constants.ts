@@ -1,7 +1,10 @@
 export const MODEL_ID = "gemini-3.6-flash" as const;
 export const A2UI_VERSION = "v0.9.1" as const;
 export const A2UI_PROTOCOL_VERSION = "0.9.1" as const;
-export const CATALOG_ID = "https://lab.jalbright.dev/catalogs/editorial/v2" as const;
+export const CATALOG_ID_V2 = "https://lab.jalbright.dev/catalogs/editorial/v2" as const;
+export const CATALOG_ID_V3 = "https://lab.jalbright.dev/catalogs/editorial/v3" as const;
+export const CATALOG_ID = CATALOG_ID_V2;
+export const CATALOG_IDS = [CATALOG_ID_V2, CATALOG_ID_V3] as const;
 
 export const LIMITS = {
   promptCharacters: 1_000,
@@ -27,6 +30,12 @@ export const TRUSTED_COMPONENT_NAMES = [
   "Split",
   "Rail",
   "Divider",
+  "Stack",
+  "Grid",
+  "Section",
+  "Card",
+  "Tabs",
+  "Disclosure",
   "WeatherHero",
   "RecommendationBand",
   "HourlyForecast",

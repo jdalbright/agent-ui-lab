@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentRequest } from "../shared/schemas.js";
+import type { AgentRequest } from "../../shared/schemas.js";
 import type {
   NormalizedHourlyForecast,
   WeatherBundle,
   WeatherLocation,
-} from "./_lib/google-weather.js";
-import type { GetWeatherBundleArguments } from "./_lib/gemini.js";
+} from "../../api/_lib/google-weather.js";
+import type { GetWeatherBundleArguments } from "../../api/_lib/gemini.js";
 
 const providerMocks = vi.hoisted(() => ({
   geocodeLocations: vi.fn(),
@@ -13,16 +13,16 @@ const providerMocks = vi.hoisted(() => ({
   getWeatherBundle: vi.fn(),
 }));
 
-vi.mock("./_lib/geocoding.js", () => ({
+vi.mock("../../api/_lib/geocoding.js", () => ({
   geocodeLocations: providerMocks.geocodeLocations,
   reverseGeocodeLocation: providerMocks.reverseGeocodeLocation,
 }));
 
-vi.mock("./_lib/google-weather.js", () => ({
+vi.mock("../../api/_lib/google-weather.js", () => ({
   getWeatherBundle: providerMocks.getWeatherBundle,
 }));
 
-import * as agentModule from "./agent.js";
+import * as agentModule from "../../api/agent.js";
 
 const request: AgentRequest = {
   requestId: "10000000-0000-4000-8000-000000000001",
@@ -111,6 +111,10 @@ type ExecuteWeather = (
 ) => Promise<{ data: unknown; traceArguments?: Readonly<Record<string, unknown>> }>;
 
 const executeWeather = (agentModule as unknown as { executeWeather: ExecuteWeather }).executeWeather;
+
+function requestWithPrompt(prompt: string): AgentRequest {
+  return { ...request, prompt };
+}
 
 describe("executeWeather", () => {
   beforeEach(() => {
@@ -243,6 +247,231 @@ describe("executeWeather", () => {
         },
       ],
     });
+  });
+
+  it.each([
+    ["omits", undefined],
+    ["mismatches", 1],
+  ] as const)(
+    "keeps an open-ended walk inside today when the tool %s targetDayOffset",
+    async (_label, toolTargetDayOffset) => {
+      const raleigh = { name: "Raleigh, NC", latitude: 35.7796, longitude: -78.6382 };
+      const forecast = [
+        hour("2026-08-02T02:00:00.000Z", {
+          feelsLike: 96,
+          precipitationProbability: 80,
+          conditionKey: "rain",
+        }),
+        hour("2026-08-02T03:00:00.000Z", {
+          feelsLike: 96,
+          precipitationProbability: 80,
+          conditionKey: "rain",
+        }),
+        hour("2026-08-02T04:00:00.000Z"),
+        hour("2026-08-02T05:00:00.000Z"),
+      ];
+      providerMocks.geocodeLocations.mockResolvedValue([raleigh]);
+      providerMocks.getWeatherBundle.mockResolvedValue(bundle([raleigh], forecast));
+
+      const result = await executeWeather(
+        {
+          locations: ["Raleigh, NC"],
+          hours: 24,
+          days: 2,
+          units: "imperial",
+          activity: "walk",
+          durationHours: 2,
+          ...(toolTargetDayOffset === undefined
+            ? {}
+            : { targetDayOffset: toolTargetDayOffset }),
+        },
+        requestWithPrompt("When should I take a walk in Raleigh today?"),
+        "maps-key",
+        new AbortController().signal,
+      );
+
+      expect(providerMocks.getWeatherBundle).toHaveBeenCalledWith(
+        expect.objectContaining({ hours: 26, days: 2 }),
+      );
+      expect(result).toMatchObject({
+        data: {
+          activityWindows: [
+            {
+              startTime: "2026-08-02T02:00:00.000Z",
+              endTime: "2026-08-02T04:00:00.000Z",
+            },
+          ],
+        },
+        traceArguments: { targetDayOffset: 0 },
+      });
+    },
+  );
+
+  it.each([
+    ["omits", undefined],
+    ["mismatches", 0],
+  ] as const)(
+    "keeps an open-ended walk inside tomorrow when the tool %s targetDayOffset",
+    async (_label, toolTargetDayOffset) => {
+      const raleigh = { name: "Raleigh, NC", latitude: 35.7796, longitude: -78.6382 };
+      const forecast = [
+        hour("2026-08-02T02:00:00.000Z"),
+        hour("2026-08-02T03:00:00.000Z"),
+        hour("2026-08-02T04:00:00.000Z", {
+          feelsLike: 96,
+          precipitationProbability: 80,
+          conditionKey: "rain",
+        }),
+        hour("2026-08-02T05:00:00.000Z", {
+          feelsLike: 96,
+          precipitationProbability: 80,
+          conditionKey: "rain",
+        }),
+      ];
+      providerMocks.geocodeLocations.mockResolvedValue([raleigh]);
+      providerMocks.getWeatherBundle.mockResolvedValue(bundle([raleigh], forecast));
+
+      const result = await executeWeather(
+        {
+          locations: ["Raleigh, NC"],
+          hours: 24,
+          days: 2,
+          units: "imperial",
+          activity: "walk",
+          durationHours: 2,
+          ...(toolTargetDayOffset === undefined
+            ? {}
+            : { targetDayOffset: toolTargetDayOffset }),
+        },
+        requestWithPrompt("When should I take a walk in Raleigh tomorrow?"),
+        "maps-key",
+        new AbortController().signal,
+      );
+
+      expect(providerMocks.getWeatherBundle).toHaveBeenCalledWith(
+        expect.objectContaining({ hours: 50, days: 2 }),
+      );
+      expect(result).toMatchObject({
+        data: {
+          activityWindows: [
+            {
+              startTime: "2026-08-02T04:00:00.000Z",
+              endTime: "2026-08-02T06:00:00.000Z",
+            },
+          ],
+        },
+        traceArguments: { targetDayOffset: 1 },
+      });
+    },
+  );
+
+  it("uses the prompt day for an exact-time request when tool arguments disagree", async () => {
+    const denver = { name: "Denver, CO", latitude: 39.7392, longitude: -104.9903 };
+    const forecast = [
+      hour("2026-08-01T13:00:00.000Z"),
+      hour("2026-08-02T13:00:00.000Z"),
+    ];
+    providerMocks.geocodeLocations.mockResolvedValue([denver]);
+    providerMocks.getWeatherBundle.mockResolvedValue(bundle([denver], forecast, "America/Denver"));
+
+    const result = await executeWeather(
+      {
+        locations: ["Denver, CO"],
+        hours: 24,
+        days: 2,
+        units: "imperial",
+        activity: "run",
+        durationHours: 1,
+        targetLocalTime: "07:00",
+        targetDayOffset: 0,
+      },
+      requestWithPrompt("When should I run in Denver at 7 AM tomorrow?"),
+      "maps-key",
+      new AbortController().signal,
+    );
+
+    expect(providerMocks.getWeatherBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ hours: 34 }),
+    );
+    expect(result).toMatchObject({
+      data: { activityWindows: [{ startTime: "2026-08-02T13:00:00.000Z" }] },
+      traceArguments: { targetLocalTime: "07:00", targetDayOffset: 1 },
+    });
+  });
+
+  it("preserves the exact-time requirement for an explicit tool day offset", async () => {
+    const denver = { name: "Denver, CO", latitude: 39.7392, longitude: -104.9903 };
+    providerMocks.geocodeLocations.mockResolvedValue([denver]);
+
+    await expect(
+      executeWeather(
+        {
+          locations: ["Denver, CO"],
+          units: "imperial",
+          activity: "run",
+          durationHours: 1,
+          targetLocalTime: "07:00",
+        },
+        requestWithPrompt("When should I run in Denver at 7 AM tomorrow?"),
+        "maps-key",
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("targetDayOffset is required with targetLocalTime");
+    expect(providerMocks.getWeatherBundle).not.toHaveBeenCalled();
+  });
+
+  it.each([1.5, 10])(
+    "rejects malformed targetDayOffset %s even when the prompt supplies today",
+    async (targetDayOffset) => {
+      const raleigh = { name: "Raleigh, NC", latitude: 35.7796, longitude: -78.6382 };
+      providerMocks.geocodeLocations.mockResolvedValue([raleigh]);
+
+      await expect(
+        executeWeather(
+          {
+            locations: ["Raleigh, NC"],
+            units: "imperial",
+            activity: "walk",
+            durationHours: 1,
+            targetDayOffset,
+          },
+          requestWithPrompt("When should I take a walk in Raleigh today?"),
+          "maps-key",
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("targetDayOffset must be an integer from 0 through 9");
+      expect(providerMocks.getWeatherBundle).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails closed when no complete activity window remains in the requested local day", async () => {
+    const raleigh = { name: "Raleigh, NC", latitude: 35.7796, longitude: -78.6382 };
+    const forecast = [
+      hour("2026-08-02T03:00:00.000Z"),
+      hour("2026-08-02T04:00:00.000Z"),
+    ];
+    providerMocks.geocodeLocations.mockResolvedValue([raleigh]);
+    providerMocks.getWeatherBundle.mockResolvedValue(
+      bundle([raleigh], forecast, "America/New_York", "2026-08-02T03:30:00.000Z"),
+    );
+
+    await expect(
+      executeWeather(
+        {
+          locations: ["Raleigh, NC"],
+          hours: 24,
+          units: "imperial",
+          activity: "walk",
+          durationHours: 1,
+        },
+        requestWithPrompt("When should I take a walk in Raleigh today?"),
+        "maps-key",
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("requested local activity day");
+    expect(providerMocks.getWeatherBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ hours: 26 }),
+    );
   });
 
   it.each([

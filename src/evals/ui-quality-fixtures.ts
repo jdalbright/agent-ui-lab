@@ -8,7 +8,7 @@ import type {
   ClientContext,
   SourceRecord,
   SurfaceSpec,
-} from "@shared/schemas.js";
+} from "../../shared/schemas.js";
 import type { UiQualityCase } from "./ui-quality-cases.js";
 
 const ACCESSED_AT = "2026-08-02T12:00:00.000Z";
@@ -125,6 +125,14 @@ function searchRetrieval(
     sources: records.map((record) =>
       sourceRecord(record.id, fixture, "google-search", record.title, record.snippet),
     ),
+    searchEvidence: {
+      status: "complete",
+      spans: records.map((record, ordinal) => ({
+        sourceId: record.id,
+        ordinal,
+        text: record.snippet,
+      })),
+    },
     evidence: [],
     toolRounds: 1,
   };
@@ -197,7 +205,9 @@ function weatherRetrieval(
       {
         tool: "get_weather_bundle",
         arguments: {
-          location: locations.map((location) => location.name).join(", "),
+          ...(locations.length === 1
+            ? { location: locations[0]?.name }
+            : { locations: locations.map((location) => location.name) }),
           units: unitSystem,
         },
         result: {
@@ -467,6 +477,11 @@ const RECORDED_UI_QUALITY_FIXTURES: Readonly<Record<string, RecordedUiQualityFix
           recommendationValue: "81°F",
           recommendationDetail: "Partly sunny in Raleigh, North Carolina.",
         },
+        {
+          type: "metrics",
+          locationIndex: 0,
+          metrics: ["humidity", "wind"],
+        },
         { type: "sources", label: "Source", sourceIds: ["src_weather01"] },
       ],
     },
@@ -695,12 +710,14 @@ const RECORDED_UI_QUALITY_FIXTURES: Readonly<Record<string, RecordedUiQualityFix
       {
         id: "src_search01",
         title: "Southwest carry-on baggage policy",
-        snippet: "Southwest permits one carry-on bag and one personal item.",
+        snippet:
+          "Southwest permits one carry-on bag up to 24 by 16 by 10 inches and one personal item.",
       },
       {
         id: "src_search02",
         title: "Delta carry-on baggage policy",
-        snippet: "Delta permits one carry-on bag and one personal item with published size limits.",
+        snippet:
+          "Delta permits one carry-on bag up to 22 by 14 by 9 inches and one personal item.",
       },
     ]),
     plan: {
@@ -715,18 +732,18 @@ const RECORDED_UI_QUALITY_FIXTURES: Readonly<Record<string, RecordedUiQualityFix
           title: "Southwest vs. Delta carry-on verdict",
           recommendation: "Southwest is the more generous carry-on choice for this comparison.",
           items: [
-            { label: "Southwest", value: "More generous", detail: "One carry-on plus one personal item", recommended: true },
-            { label: "Delta", value: "Standard allowance", detail: "One carry-on plus one personal item", recommended: false },
+            { label: "Southwest", value: "More generous", detail: "24 × 16 × 10 in carry-on", recommended: true },
+            { label: "Delta", value: "Smaller limit", detail: "22 × 14 × 9 in carry-on", recommended: false },
           ],
           sourceIds: ["src_search01", "src_search02"],
         },
         {
           type: "table",
           caption: "Published carry-on allowances",
-          columns: ["Airline", "Carry-on", "Personal item"],
+          columns: ["Airline", "Maximum carry-on size", "Personal item"],
           rows: [
-            ["Southwest", "1 bag", "1 item"],
-            ["Delta", "1 bag", "1 item"],
+            ["Southwest", "24 × 16 × 10 in", "1 item"],
+            ["Delta", "22 × 14 × 9 in", "1 item"],
           ],
           sourceIds: ["src_search01", "src_search02"],
         },
@@ -903,12 +920,14 @@ const RECORDED_UI_QUALITY_FIXTURES: Readonly<Record<string, RecordedUiQualityFix
       {
         id: "src_search01",
         title: "Gemini 3.6 Flash model documentation",
-        snippet: "Gemini 3.6 Flash adds updated capabilities and model behavior.",
+        snippet:
+          "Gemini 3.6 Flash is generally available and production-ready, with function calling, Search grounding, and structured outputs.",
       },
       {
         id: "src_search02",
         title: "Gemini API release notes",
-        snippet: "The release notes describe what is new and what changed.",
+        snippet:
+          "Compared with Gemini 3.5 Flash, Gemini 3.6 Flash completes agentic workflows with fewer reasoning steps, turns, and tool calls, and improves production-ready code generation with fewer debugging loops.",
       },
     ]),
     plan: {
@@ -920,8 +939,8 @@ const RECORDED_UI_QUALITY_FIXTURES: Readonly<Record<string, RecordedUiQualityFix
         {
           type: "lead",
           variant: "brief",
-          title: "What changed in Gemini 3.6 Flash",
-          summary: "Gemini 3.6 Flash brings updated model capabilities; this concise brief separates the documented changes from interpretation.",
+          title: "Gemini 3.6 Flash",
+          summary: "A concise source-derived digest of the requested changes.",
           sourceIds: ["src_search01", "src_search02"],
         },
         {
@@ -929,8 +948,8 @@ const RECORDED_UI_QUALITY_FIXTURES: Readonly<Record<string, RecordedUiQualityFix
           variant: "stack",
           label: "Documented changes",
           items: [
-            { title: "Model documentation", finding: "The official model page describes the new Gemini 3.6 Flash capabilities.", sourceId: "src_search01", stance: "support" },
-            { title: "Release record", finding: "The release notes identify what changed in the current model release.", sourceId: "src_search02", stance: "support" },
+            { title: "Source change 1", finding: "Gemini 3.6 Flash is generally available and production-ready, with function calling, Search grounding, and structured outputs", sourceId: "src_search01", stance: "support" },
+            { title: "Source change 2", finding: "Gemini 3.6 Flash completes agentic workflows with fewer reasoning steps, turns, and tool calls; improves production-ready code generation with fewer debugging loops", sourceId: "src_search02", stance: "support" },
           ],
         },
         { type: "sources", label: "Sources", sourceIds: ["src_search01", "src_search02"] },
@@ -1071,8 +1090,8 @@ const RECORDED_UI_QUALITY_FIXTURES: Readonly<Record<string, RecordedUiQualityFix
   },
   "quality-research-a2ui-stability-claims": {
     retrieval: searchRetrieval("quality-research-a2ui-stability-claims", [
-      { id: "src_search01", title: "A2UI 0.9.1 documentation", snippet: "A2UI 0.9.1 remains a documented protocol version." },
-      { id: "src_search02", title: "A2UI 1.0 release status", snippet: "A2UI 1.0 documentation identifies whether it is stable, candidate, or preview." },
+      { id: "src_search01", title: "A2UI specification versions", snippet: "A2UI v0.9.1 is the current production release." },
+      { id: "src_search02", title: "A2UI v1.0 release status", snippet: "A2UI v1.0 is still a release candidate, not the current production release." },
     ]),
     plan: {
       kind: "research",
@@ -1083,8 +1102,8 @@ const RECORDED_UI_QUALITY_FIXTURES: Readonly<Record<string, RecordedUiQualityFix
         {
           type: "lead",
           variant: "brief",
-          title: "Has A2UI 1.0 replaced 0.9.1 as stable?",
-          summary: "The claim must distinguish A2UI v1.0's stable, candidate, or preview status from the earlier v0.9.1 release.",
+          title: "No—A2UI v1.0 has not replaced v0.9.1 as the current release",
+          summary: "A2UI v1.0 is still a candidate, while v0.9.1 remains the current production release.",
           sourceIds: ["src_search01", "src_search02"],
         },
         {
@@ -1092,8 +1111,8 @@ const RECORDED_UI_QUALITY_FIXTURES: Readonly<Record<string, RecordedUiQualityFix
           variant: "for-against",
           label: "Claim assessment",
           items: [
-            { title: "Earlier release", finding: "A2UI v0.9.1 remains documented as the earlier protocol release.", sourceId: "src_search01", stance: "neutral" },
-            { title: "Newer status", finding: "The v1.0 source determines whether the newer version is stable, candidate, or preview.", sourceId: "src_search02", stance: "challenge" },
+            { title: "Current release", finding: "A2UI v0.9.1 remains the current production release.", sourceId: "src_search01", stance: "challenge" },
+            { title: "Candidate status", finding: "A2UI v1.0 is a release candidate, which directly challenges the replacement claim.", sourceId: "src_search02", stance: "challenge" },
           ],
         },
         { type: "sources", label: "Official A2UI sources", sourceIds: ["src_search01", "src_search02"] },
@@ -1131,6 +1150,51 @@ export function buildRecordedUiQualityCandidate(
   };
 }
 
+const STRUCTURAL_SEMANTIC_KEYS = [
+  "recipeId",
+  "density",
+  "emphasis",
+  "variant",
+  "ratio",
+  "tone",
+  "accent",
+  "align",
+  "level",
+] as const;
+
+function structuralFingerprintNode(
+  spec: SurfaceSpec,
+  nodeId: string,
+  ancestors: ReadonlySet<string>,
+): Record<string, unknown> {
+  const node = spec.components.find((candidate) => candidate.id === nodeId);
+  if (!node) throw new TypeError("Structural fingerprint encountered an unreachable child.");
+  if (ancestors.has(nodeId)) throw new TypeError("Structural fingerprint encountered a cycle.");
+
+  const record = node as unknown as Record<string, unknown>;
+  const semantics = Object.fromEntries(
+    STRUCTURAL_SEMANTIC_KEYS.flatMap((key) =>
+      typeof record[key] === "string" ? [[key, record[key]]] : [],
+    ),
+  );
+  const childIds = Array.isArray(record.children)
+    ? record.children.filter((childId): childId is string => typeof childId === "string")
+    : [];
+  const nextAncestors = new Set(ancestors).add(nodeId);
+
+  return {
+    component: node.component,
+    ...semantics,
+    ...(childIds.length > 0
+      ? {
+          children: childIds.map((childId) =>
+            structuralFingerprintNode(spec, childId, nextAncestors),
+          ),
+        }
+      : {}),
+  };
+}
+
 export function uiQualityStructuralFingerprint(
   candidate: RecordedUiQualityCandidate,
 ): string {
@@ -1138,6 +1202,98 @@ export function uiQualityStructuralFingerprint(
     recipeId: candidate.plan.recipeId,
     density: candidate.plan.density,
     emphasis: candidate.plan.emphasis,
-    components: candidate.spec.components.map((node) => node.component),
+    tree: structuralFingerprintNode(candidate.spec, candidate.spec.rootId, new Set()),
   });
+}
+
+export type UiQualityStructuralConformanceIssue =
+  | {
+      readonly code: "ordered_components";
+      readonly expected: readonly string[];
+      readonly actual: readonly string[];
+    }
+  | {
+      readonly code: "semantic_variant";
+      readonly component: string;
+      readonly actual: string;
+      readonly allowed: readonly string[];
+    };
+
+export interface UiQualityStructuralConformanceResult {
+  readonly success: boolean;
+  readonly issues: readonly UiQualityStructuralConformanceIssue[];
+}
+
+function reachableStructuralNodes(spec: SurfaceSpec): readonly SurfaceSpec["components"][number][] {
+  const byId = new Map(spec.components.map((node) => [node.id, node]));
+  const ordered: SurfaceSpec["components"][number][] = [];
+
+  const visit = (nodeId: string, ancestors: ReadonlySet<string>): void => {
+    const node = byId.get(nodeId);
+    if (!node) throw new TypeError("Structural conformance encountered an unreachable child.");
+    if (ancestors.has(nodeId)) throw new TypeError("Structural conformance encountered a cycle.");
+    ordered.push(node);
+
+    const record = node as unknown as Record<string, unknown>;
+    if (!Array.isArray(record.children)) return;
+    const nextAncestors = new Set(ancestors).add(nodeId);
+    for (const childId of record.children) {
+      if (typeof childId === "string") visit(childId, nextAncestors);
+    }
+  };
+
+  visit(spec.rootId, new Set());
+  return ordered;
+}
+
+/**
+ * Evaluates the explicit benchmark contract. Recorded fixtures remain useful
+ * examples and fingerprint inputs, but their optional modules are not treated
+ * as the only acceptable composition.
+ */
+export function evaluateUiQualityStructuralConformance(
+  candidate: RecordedUiQualityCandidate,
+  benchmark: UiQualityCase = candidate.benchmark,
+): UiQualityStructuralConformanceResult {
+  const nodes = reachableStructuralNodes(candidate.spec);
+  const componentNames: string[] = nodes.map((node) => node.component);
+  const issues: UiQualityStructuralConformanceIssue[] = [];
+
+  let previousIndex = -1;
+  const orderedComponentsMatch = benchmark.expected.orderedComponents.every(
+    (componentName) => {
+      const nextIndex = componentNames.indexOf(componentName, previousIndex + 1);
+      if (nextIndex < 0) return false;
+      previousIndex = nextIndex;
+      return true;
+    },
+  );
+  if (!orderedComponentsMatch) {
+    issues.push({
+      code: "ordered_components",
+      expected: [...benchmark.expected.orderedComponents],
+      actual: componentNames,
+    });
+  }
+
+  for (const expectation of benchmark.expected.semanticVariants) {
+    const matchingNodes = nodes.filter((node) => node.component === expectation.component);
+    const mismatch = matchingNodes.find((node) => {
+      const variant = (node as unknown as Record<string, unknown>).variant;
+      return typeof variant !== "string" || !expectation.allowed.includes(variant);
+    });
+    if (matchingNodes.length === 0 || mismatch) {
+      const actual = mismatch
+        ? (mismatch as unknown as Record<string, unknown>).variant
+        : undefined;
+      issues.push({
+        code: "semantic_variant",
+        component: expectation.component,
+        actual: typeof actual === "string" ? actual : "missing",
+        allowed: [...expectation.allowed],
+      });
+    }
+  }
+
+  return { success: issues.length === 0, issues };
 }

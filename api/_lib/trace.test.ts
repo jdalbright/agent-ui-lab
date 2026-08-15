@@ -94,4 +94,29 @@ describe("createTrace", () => {
     expect(trace.arguments).toEqual({ location: "Raleigh, NC" });
     expect(JSON.stringify(trace)).not.toContain("private-key");
   });
+
+  it("accepts only bounded categorical grammar-v3 composition metadata", () => {
+    const trace = createTrace({
+      stage: "composition",
+      label: "Compose interface",
+      status: "complete",
+      compositionMode: "grammar-v3",
+      layoutFamily: "grid",
+      contentNodeCount: 5,
+      layoutNodeCount: 3,
+      density: "balanced",
+      emphasis: "exploration",
+      qualityChecks: [
+        { code: "graph_integrity", passed: true },
+        { code: "sources_visible", passed: true },
+      ],
+    });
+
+    expect(trace).toMatchObject({
+      compositionMode: "grammar-v3",
+      layoutFamily: "grid",
+      contentNodeCount: 5,
+      layoutNodeCount: 3,
+    });
+  });
 });

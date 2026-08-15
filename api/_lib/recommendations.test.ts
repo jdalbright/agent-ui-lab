@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { NormalizedHourlyForecast, NormalizedWeatherAlert } from "./google-weather.js";
+import type {
+  LocationWeather,
+  NormalizedHourlyForecast,
+  NormalizedWeatherAlert,
+  WeatherBundle,
+} from "./google-weather.js";
 import {
   recommendActivityWindow,
   recommendWalkWindow,
@@ -44,6 +49,44 @@ function hourlyRange(startTime: string, count: number): NormalizedHourlyForecast
   });
 }
 
+function locationWeather(
+  name: string,
+  timeZone: string,
+  observedAt: string,
+  hourly: readonly NormalizedHourlyForecast[],
+): LocationWeather {
+  return {
+    location: { name, latitude: 0, longitude: 0 },
+    units: "imperial",
+    fetchedAt: observedAt,
+    current: {
+      observedAt,
+      timeZone,
+      temperature: 70,
+      feelsLike: 70,
+      temperatureUnit: "F",
+      conditionKey: "clear",
+      conditionText: "Clear",
+      isDaytime: true,
+      humidity: 50,
+      precipitationProbability: 5,
+      windDirection: "WEST",
+      windDegrees: 270,
+      windSpeed: 5,
+      windGust: 8,
+      windSpeedUnit: "mph",
+      visibility: 10,
+      visibilityUnit: "mi",
+      uvIndex: 2,
+      cloudCover: 5,
+      thunderstormProbability: 0,
+    },
+    hourly: [...hourly],
+    daily: [],
+    alerts: [],
+  };
+}
+
 describe("deterministic activity recommendations", () => {
   it("chooses the mild, dry two-hour walk window", () => {
     const hours = [
@@ -77,6 +120,136 @@ describe("deterministic activity recommendations", () => {
 
     expect(recommendation?.startTime).toBe("2026-08-01T10:00:00.000Z");
   });
+
+  it("keeps an open-ended activity window within the requested local calendar day", () => {
+    const hours = hourlyRange("2026-08-02T02:00:00.000Z", 4).map((forecast, index) =>
+      index < 2
+        ? {
+            ...forecast,
+            feelsLike: 95,
+            precipitationProbability: 80,
+            conditionKey: "rain" as const,
+          }
+        : forecast,
+    );
+
+    const today = recommendActivityWindow(hours, {
+      activity: "walk",
+      durationHours: 2,
+      targetDayOffset: 0,
+      timeZone: "America/New_York",
+      referenceTime: "2026-08-01T18:00:00.000Z",
+    });
+    const tomorrow = recommendActivityWindow(hours, {
+      activity: "walk",
+      durationHours: 2,
+      targetDayOffset: 1,
+      timeZone: "America/New_York",
+      referenceTime: "2026-08-01T18:00:00.000Z",
+    });
+
+    expect(today).toMatchObject({
+      startTime: "2026-08-02T02:00:00.000Z",
+      endTime: "2026-08-02T04:00:00.000Z",
+    });
+    expect(tomorrow).toMatchObject({
+      startTime: "2026-08-02T04:00:00.000Z",
+      endTime: "2026-08-02T06:00:00.000Z",
+    });
+    expect(tomorrow?.score).toBeGreaterThan(today?.score ?? 0);
+  });
+
+  it("fails closed when no complete window remains inside the requested local day", () => {
+    const hours = hourlyRange("2026-08-02T03:00:00.000Z", 2);
+
+    const recommendation = recommendActivityWindow(hours, {
+      activity: "walk",
+      durationHours: 2,
+      targetDayOffset: 0,
+      timeZone: "America/New_York",
+      referenceTime: "2026-08-01T18:00:00.000Z",
+    });
+
+    expect(recommendation).toBeNull();
+  });
+
+  it("does not recommend an already-started hourly slot on the requested local day", () => {
+    const recommendation = recommendActivityWindow(
+      [hourlyRange("2026-08-02T03:00:00.000Z", 1)[0]],
+      {
+        activity: "walk",
+        durationHours: 1,
+        targetDayOffset: 0,
+        timeZone: "America/New_York",
+        referenceTime: "2026-08-02T03:30:00.000Z",
+      },
+    );
+
+    expect(recommendation).toBeNull();
+  });
+
+  it("resolves the requested calendar day independently in each location time zone", () => {
+    const observedAt = "2026-08-01T23:30:00.000Z";
+    const sharedHour = hourlyRange("2026-08-02T04:00:00.000Z", 1);
+    const weather: WeatherBundle = {
+      units: "imperial",
+      fetchedAt: observedAt,
+      attribution: {
+        text: "Source: Includes weather data from Google",
+        url: "https://developers.google.com/maps/documentation/weather/policies",
+      },
+      locations: [
+        locationWeather("New York, NY", "America/New_York", observedAt, sharedHour),
+        locationWeather("Los Angeles, CA", "America/Los_Angeles", observedAt, sharedHour),
+      ],
+    };
+
+    const today = scoreActivityWindows(weather, {
+      activity: "walk",
+      durationHours: 1,
+      targetDayOffset: 0,
+    });
+    const tomorrow = scoreActivityWindows(weather, {
+      activity: "walk",
+      durationHours: 1,
+      targetDayOffset: 1,
+    });
+
+    expect(today.map(({ location }) => location.name)).toEqual(["Los Angeles, CA"]);
+    expect(tomorrow.map(({ location }) => location.name)).toEqual(["New York, NY"]);
+  });
+
+  it.each([
+    ["spring-forward", "2026-03-08T05:00:00.000Z", 23],
+    ["fall-back", "2026-11-01T04:00:00.000Z", 25],
+  ] as const)(
+    "keeps an open-ended window on its requested %s local day",
+    (_label, dayStart, localDayHours) => {
+      const hours = hourlyRange(dayStart, localDayHours + 2).map((forecast, index) =>
+        index < localDayHours
+          ? {
+              ...forecast,
+              feelsLike: 95,
+              precipitationProbability: 80,
+              conditionKey: "rain" as const,
+            }
+          : forecast,
+      );
+
+      const recommendation = recommendActivityWindow(hours, {
+        activity: "walk",
+        durationHours: 2,
+        targetDayOffset: 0,
+        timeZone: "America/New_York",
+        referenceTime: dayStart,
+      });
+
+      expect(recommendation).toMatchObject({
+        startTime: dayStart,
+        endTime: new Date(Date.parse(dayStart) + 2 * 60 * 60 * 1_000).toISOString(),
+      });
+    },
+  );
 
   it("scores the requested Denver 7 AM run tomorrow instead of a generic best window", () => {
     const hours = [

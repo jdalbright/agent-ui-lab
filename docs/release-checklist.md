@@ -27,9 +27,9 @@ Use this checklist for the first public release and subsequent production change
 - [ ] Every research evidence item references a source ID supplied by the server.
 - [ ] All 18 recorded plan/evidence pairs validate, compile with the production SurfacePlan compiler, pass SurfaceSpec validation, and pass the deterministic quality linter.
 - [ ] The quality linter confirms answer-first hierarchy, sources-last ordering, requested coverage, chart/table alignment, source closure, and bounded density.
-- [ ] The 36 recipe/viewport screenshots match their checked-in references with no serious/critical axe findings or document overflow.
+- [ ] The 36 recipe/viewport and 15 grammar-v3/viewport screenshots match their checked-in references with no serious/critical axe findings or document overflow.
 
-`npm run eval:ui` runs the compiler-backed semantic fixtures, production build, and 36 Chromium screenshot cases. The default test suite and CI must use recorded Gemini Search, Geocoding, and Weather fixtures. CI must not receive provider secrets or run `npm run eval:ui:live`. Run that opt-in command separately: it uses live Gemini composition for 54 samples but keeps Search, Geocoding, and Weather evidence recorded.
+`npm run eval:ui` runs the compiler-backed semantic fixtures, production build, and 51 Chromium screenshot cases. The default test suite and CI must use recorded Gemini Search, Geocoding, and Weather fixtures. CI must not receive provider secrets or run either live UI evaluation command. Run those opt-in commands separately: each uses live Gemini composition for 54 samples but keeps Search, Geocoding, and Weather evidence recorded.
 
 ## Surface Quality preview acceptance
 
@@ -38,14 +38,14 @@ Use this checklist for the first public release and subsequent production change
 - [ ] The preview has scoped live Gemini and Google Maps provider keys and reports live mode rather than replaying recorded fixtures.
 - [ ] The preview selects each of the nine recipes for at least one representative prompt.
 - [ ] Intent changes produce the expected structural change rather than random visual variation.
-- [ ] One-to-four-location retrieval, bounded activity/time requests, and supported presentation ranges preserve their evidence: up to 24 hourly/10 daily Weather entries or 12 weather-comparison forecast points.
+- [ ] One-to-four-location retrieval, bounded activity/time requests, and supported presentation ranges preserve their evidence: up to 24 hourly or 10 daily entries for Weather and weather-comparison surfaces.
 - [ ] Weather-backed comparisons use evidence-derived measurements, aligned table/chart references, and complete server-issued sources.
 - [ ] Requested locations, units, time ranges, comparison criteria, and cited evidence are preserved at every target width.
 - [ ] The inspector reports only recipe, density, emphasis, quality-check outcomes, repair category, compiler result, counts, and timings.
 - [ ] Invalid first-pass plans receive one replacement repair; a second failure produces the appropriate deterministic domain recipe.
 - [ ] Every plan has exactly one final Sources module; every content citation is listed and every listed ID was issued by the server.
 - [ ] The original `spec-v1` path remains smoke-tested as the rollback target.
-- [ ] If the opt-in live benchmark is run, record its first-pass validity, repair, fallback, latency, recipe selection, and structural-fingerprint results without logging prompts or evidence bodies.
+- [ ] If the opt-in live benchmark is run, record separate quality-valid and structural-conformance totals plus first-pass quality validity, repair, fallback, latency, recipe selection, and diagnostic fingerprint IDs. Emit one bounded safe record per case without logging prompts or evidence bodies.
 - [ ] Do not publish the ≥95% first-pass target as achieved until at least 52 of the 54 observed samples pass first validation.
 
 ## Interaction and accessibility
@@ -62,6 +62,20 @@ Use this checklist for the first public release and subsequent production change
 - [ ] Confirm each reference surface preserves its supported requested range and has no serious or critical axe findings.
 - [ ] A human reviews every live Vercel preview recipe at all four widths and records at least 4/5 for relevance, hierarchy, scanability, and visual balance; checked-in screenshots or model scores are not sufficient approval.
 - [ ] Measure the deterministic shell with Lighthouse and confirm accessibility 100 and scores of at least 90 for the other required categories before recording the result.
+
+## Grammar v3 shadow and ramp
+
+- [ ] Keep production on `plan-v2` while grammar v3 is evaluated and reviewed.
+- [ ] Run `npm run eval:ui:live:v3` against all 18 recorded-evidence cases and record 54/54 final quality-valid, 54/54 invariant-conformant, at least 52/54 first-pass valid, zero unsafe outputs, and zero fallback uses.
+- [ ] Confirm exact recipe trees and presentation-only variants are telemetry only; facts, requested coverage, graph integrity, answer-first order, visible sources, citations, alignment, and budgets remain hard gates.
+- [ ] Confirm every grammar-v3 A2UI stream declares `https://lab.jalbright.dev/catalogs/editorial/v3`, while a deterministic fallback declares the existing plan-v2 catalog.
+- [ ] Test valid alternative Stack, Grid, Split, Section, Card, Rail, Tabs, Disclosure, and Divider compositions without accepting unknown tokens, raw visual values, code, URLs, or actions.
+- [ ] Verify cycles, unreachable nodes, shared children, duplicate content, hidden primary answers, hidden alerts, hidden sources, nested interactions, excessive depth, and excessive node counts fail closed.
+- [ ] Verify tabs with Tab, arrow, Home, and End keys and screen-reader semantics; verify disclosure names/state; verify both under reduced motion.
+- [ ] Review representative grammar-v3 surfaces at 320, 390, 768, 1024, and 1440 pixels with no containment or document overflow defects and no serious/critical axe findings.
+- [ ] In preview, set `SURFACE_COMPOSER_VERSION=grammar-v3` and begin with `SURFACE_GRAMMAR_V3_ROLLOUT_PERCENT=100`; confirm plan-v2 fallback is automatic and bounded.
+- [ ] After preview and human usefulness acceptance, ramp production by stable hashing at 10%, 50%, and 100%, reviewing quality, fallback, latency, accessibility, and safe trace counts at each stage.
+- [ ] Exercise immediate rollback by restoring `SURFACE_COMPOSER_VERSION=plan-v2`; confirm no client, schema, or data migration is required.
 
 ## Production environment
 

@@ -56,10 +56,17 @@ const WEATHER_COMPARISON_SHAPES =
   /\b(compare|which is better)\b[\s\S]{0,220}\b(weather|forecast|conditions?|outdoor|brunch|next (?:three|four|five|seven|\d+) days?)\b|\b(next (?:three|four|five|seven|\d+) days?)\b[\s\S]{0,160}\b(?:in|for)\b|\bcompare\b[\s\S]{0,120}\b(?:raleigh|durham|charlotte|miami|denver|seattle|london|chapel hill)\b[\s\S]{0,120}\b(?:tomorrow|saturday|sunday|this weekend)\b/i;
 const WEATHER_ACTIVITY_SHAPES =
   /\b(what should i wear|best (?:time|window)|good (?:time|day)|outdoor brunch|walk|run|hike)\b/i;
+const CHANGE_SUMMARY_TERMS =
+  /\bwhat(?:(?:['’]s)|\s+(?:is|has))?\s+(?:changed|new|different)\b/i;
 const RESEARCH_TERMS =
-  /\b(research|official sources?|official[\s\w.-]{0,40}source|official (?:polic(?:y|ies)|documentation|project pages?)|cite|sources? and cite|timeline|evidence (?:for|supports?|challenges?)|what changed|release and support statuses?|current[\s\w-]{0,40}requirements?|today'?s news)\b/i;
+  /\b(research|official sources?|official[\s\w.-]{0,40}source|official (?:polic(?:y|ies)|documentation|project pages?)|cite|sources? and cite|timeline|evidence (?:for|supports?|challenges?)|release and support statuses?|current[\s\w-]{0,40}requirements?|today'?s news)\b/i;
 const COMPARISON_TERMS =
   /\b(compare|comparison|versus|\bvs\.?\b|differences?|score)\b|\bwhich\b[\s\S]{0,80}\bbetter\b/i;
+const WEATHER_CHART_TERMS = /\b(?:chart|plot|graph|visuali[sz]e)\b/i;
+const WEATHER_CHART_METRICS =
+  /\b(?:weather|forecasts?|highs?|lows?|conditions?|temperatures?|rain(?:fall)?|snow(?:fall)?|precipitation|humidity|wind(?:\s+speeds?)?)\b/i;
+const MULTI_LOCATION_LIST =
+  /\b(?:for|in|across|between)\s+(?:[^,;:]{1,60}\s+(?:and|versus|vs\.?|&)\s+[^,;:]{1,60}|[^,;:]{3,60},\s*[^,;:]{3,60}(?=$|,))/i;
 
 const MEDICAL_EMERGENCY =
   /\b(crushing chest pain|chest pain[\s\S]{0,80}(?:trouble breathing|shortness of breath)|trouble breathing[\s\S]{0,80}chest pain|cannot breathe|can'?t breathe|stroke symptoms?|severe bleeding|unconscious|overdose)\b/i;
@@ -111,13 +118,36 @@ function boundary(kind: CapabilityBoundary): CapabilityDecision {
   return decision("boundary", "none", "narrative", kind, kind);
 }
 
+function isMultiLocationWeatherChart(prompt: string): boolean {
+  return prompt.split(/[.!?\n]+/).some((clause) => {
+    const chartTerm = WEATHER_CHART_TERMS.exec(clause);
+    if (!chartTerm) return false;
+
+    const boundedClause = clause.slice(
+      Math.max(0, chartTerm.index - 120),
+      chartTerm.index + chartTerm[0].length + 240,
+    );
+    return WEATHER_CHART_METRICS.test(boundedClause) && MULTI_LOCATION_LIST.test(boundedClause);
+  });
+}
+
 function hasWeatherIntent(prompt: string): boolean {
-  return WEATHER_TERMS.test(prompt) || WEATHER_COMPARISON_SHAPES.test(prompt) || WEATHER_ACTIVITY_SHAPES.test(prompt);
+  return (
+    WEATHER_TERMS.test(prompt) ||
+    WEATHER_COMPARISON_SHAPES.test(prompt) ||
+    WEATHER_ACTIVITY_SHAPES.test(prompt) ||
+    isMultiLocationWeatherChart(prompt)
+  );
 }
 
 function isWeatherComparison(prompt: string): boolean {
-  return COMPARISON_TERMS.test(prompt) &&
-    (WEATHER_TERMS.test(prompt) || WEATHER_COMPARISON_SHAPES.test(prompt) || /\bconditions? at\b/i.test(prompt));
+  return (
+    (COMPARISON_TERMS.test(prompt) &&
+      (WEATHER_TERMS.test(prompt) ||
+        WEATHER_COMPARISON_SHAPES.test(prompt) ||
+        /\bconditions? at\b/i.test(prompt))) ||
+    isMultiLocationWeatherChart(prompt)
+  );
 }
 
 function lacksWeatherLocation(prompt: string, context: CapabilityContext): boolean {
@@ -187,7 +217,7 @@ export function classifyCapability(
     return decision("clarification", "none", "narrative", "comparison-context-required");
   }
 
-  if (RESEARCH_TERMS.test(prompt) || COMPARISON_TERMS.test(prompt)) {
+  if (CHANGE_SUMMARY_TERMS.test(prompt) || RESEARCH_TERMS.test(prompt) || COMPARISON_TERMS.test(prompt)) {
     const comparison = COMPARISON_TERMS.test(prompt);
     return decision(
       "search",

@@ -11,7 +11,10 @@ import {
 } from "../../shared/schemas.js";
 
 const STABLE_API_VERSION = "v1" as const;
-export type StructuredOutputFunctionName = "emit_surface_spec" | "emit_surface_plan";
+export type StructuredOutputFunctionName =
+  | "emit_surface_spec"
+  | "emit_surface_plan"
+  | "emit_generative_surface_plan";
 
 const DEFAULT_STRUCTURED_OUTPUT_FUNCTION: StructuredOutputFunctionName = "emit_surface_spec";
 
@@ -101,6 +104,15 @@ const RETRIEVAL_INSTRUCTION = [
   "Use get_weather_bundle for current conditions, forecasts, public alerts, or weather-dependent recommendations.",
   "Use google_search for current public-web facts, research, or comparisons that need source grounding.",
   "Use both tools when the request needs both weather data and broader current context.",
+  "Only for an affirmative 'what changed' or 'what has changed', 'what's new' or 'what is new', or 'what's different' or 'what is different' request, format the final research evidence as bounded manifest-compatible change sentences and no other prose.",
+  "For that conditional change-summary format, you must use google_search even without source wording.",
+  "For that conditional change-summary format, use no more than two cited sources and no more than eight independent change predicates total, with exactly one independent change predicate per cited sentence.",
+  "For that conditional change-summary format, keep all cited change sentences together at or below 500 characters.",
+  "For that conditional change-summary format, directly cite every full change sentence to one of those sources.",
+  "For that conditional change-summary format, write the exact requested subject exactly once in every change sentence, either at the start or in the strict form `Compared with <baseline>, <exact requested subject> ...`; the baseline must not repeat the exact requested subject.",
+  "For that conditional change-summary format, after the subject use one concrete affirmative present-tense change predicate from this bounded vocabulary: is or are now generally available, production-ready, stable, deprecated, unsupported, or unavailable; adds, introduces, removes, replaces, deprecates, stops, improves, reduces, increases, decreases, completes, uses, needs, requires, supports, enables, ships, moves, switches, or no longer.",
+  "For that conditional change-summary format, emit no preamble, heading, background, question, uncertainty, pronoun or substituted subject, fragment, or passive or subjectless continuation outside the listed subject-plus-predicate forms, and no bullets or Markdown.",
+  "For all other requests, do not apply these change-summary limits; follow the ordinary weather and research routing and concise factual summary rules.",
   `For named weather comparisons, send all requested places in one locations array, with no more than ${LIMITS.locations} entries.`,
   "Preserve explicitly requested hourly or daily ranges in hours and days; a seven-day outlook uses days=7.",
   "For weather-dependent activities, preserve the user's activity label and whole-hour duration. If they name a time or relative day, also send targetLocalTime in local HH:MM form and targetDayOffset where today=0 and tomorrow=1.",
@@ -241,10 +253,35 @@ export interface WeatherEvidence {
   result: unknown;
 }
 
+export const MAX_SEARCH_EVIDENCE_SPANS = LIMITS.sources * 4;
+
+export interface SearchEvidenceSpan {
+  readonly sourceId: string;
+  readonly ordinal: number;
+  readonly text: string;
+}
+
+export type SearchEvidenceProjection =
+  | {
+      readonly status: "complete";
+      readonly spans: readonly SearchEvidenceSpan[];
+    }
+  | {
+      readonly status: "incomplete";
+      readonly reason:
+        | "annotation-capacity"
+        | "missing-span"
+        | "oversize-span"
+        | "source-capacity"
+        | "unsafe-citation";
+      readonly spans: readonly SearchEvidenceSpan[];
+    };
+
 export interface GeminiRetrievalResult {
   outputText: string;
   steps: readonly Interactions.Step[];
   sources: readonly SourceRecord[];
+  searchEvidence?: SearchEvidenceProjection;
   evidence: readonly WeatherEvidence[];
   toolRounds: number;
 }
@@ -429,21 +466,55 @@ function boundedText(input: string, maximum: number): string {
   return input.replace(/\s+/g, " ").trim().slice(0, maximum);
 }
 
-function utf8Slice(text: string, start: number | undefined, end: number | undefined): string | undefined {
-  if (start === undefined || end === undefined) return undefined;
+type CitationSpanText =
+  | { readonly status: "valid"; readonly text: string }
+  | { readonly status: "missing" | "oversize" };
+
+function utf8CitationSpan(
+  text: string,
+  start: number | undefined,
+  end: number | undefined,
+): CitationSpanText {
+  if (!Number.isInteger(start) || !Number.isInteger(end)) return { status: "missing" };
   const bytes = new TextEncoder().encode(text);
-  const safeStart = Math.max(0, Math.min(start, bytes.length));
-  const safeEnd = Math.max(safeStart, Math.min(end, bytes.length));
-  const snippet = boundedText(new TextDecoder().decode(bytes.slice(safeStart, safeEnd)), 600);
-  return snippet || undefined;
+  if (start === undefined || end === undefined || start < 0 || end <= start || end > bytes.length) {
+    return { status: "missing" };
+  }
+  let decoded: string;
+  try {
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes.slice(start, end));
+  } catch {
+    return { status: "missing" };
+  }
+  const normalized = decoded.replace(/\s+/g, " ").trim();
+  if (!normalized) return { status: "missing" };
+  if (normalized.length > 600) return { status: "oversize" };
+  return { status: "valid", text: normalized };
 }
 
 export function normalizeGoogleSearchSources(
   steps: readonly Interactions.Step[],
   accessedAt = new Date(),
 ): readonly SourceRecord[] {
+  return normalizeGoogleSearchGrounding(steps, accessedAt).sources;
+}
+
+export interface GoogleSearchGroundingProjection {
+  readonly sources: readonly SourceRecord[];
+  readonly searchEvidence: SearchEvidenceProjection;
+}
+
+export function normalizeGoogleSearchGrounding(
+  steps: readonly Interactions.Step[],
+  accessedAt = new Date(),
+): GoogleSearchGroundingProjection {
   const records = new Map<string, SourceRecord>();
+  const spans: SearchEvidenceSpan[] = [];
+  const uniqueSpans = new Set<string>();
   const accessedAtIso = accessedAt.toISOString();
+  let annotationCount = 0;
+  let incompleteReason: Extract<SearchEvidenceProjection, { status: "incomplete" }>["reason"]
+    | undefined;
 
   for (const step of steps) {
     if (step.type !== "model_output") continue;
@@ -452,25 +523,68 @@ export function normalizeGoogleSearchSources(
       for (const annotation of content.annotations ?? []) {
         if (annotation.type !== "url_citation") continue;
         const url = canonicalizeSafeExternalHttpsUrl(annotation.url);
-        if (!url || records.has(url) || records.size >= LIMITS.sources) continue;
+        if (!url) {
+          incompleteReason ??= "unsafe-citation";
+          continue;
+        }
+        annotationCount += 1;
+        if (annotationCount > MAX_SEARCH_EVIDENCE_SPANS) {
+          incompleteReason = "annotation-capacity";
+          continue;
+        }
 
-        const fallbackTitle = new URL(url).hostname;
-        const title = boundedText(annotation.title ?? fallbackTitle, 240) || fallbackTitle;
-        const snippet = utf8Slice(content.text, annotation.start_index, annotation.end_index);
-        const parsed = SourceRecordSchema.parse({
-          id: sourceId(url),
-          title,
-          url,
-          provider: "google-search",
-          accessedAt: accessedAtIso,
-          ...(snippet ? { snippet } : {}),
-        });
-        records.set(url, Object.freeze(parsed));
+        let record = records.get(url);
+        if (!record && records.size >= LIMITS.sources) {
+          incompleteReason ??= "source-capacity";
+          continue;
+        }
+        const citedSpan = utf8CitationSpan(
+          content.text,
+          annotation.start_index,
+          annotation.end_index,
+        );
+        const snippet = citedSpan.status === "valid" ? citedSpan.text : undefined;
+        if (!record) {
+          const fallbackTitle = new URL(url).hostname;
+          const title = boundedText(annotation.title ?? fallbackTitle, 240) || fallbackTitle;
+          const parsed = SourceRecordSchema.parse({
+            id: sourceId(url),
+            title,
+            url,
+            provider: "google-search",
+            accessedAt: accessedAtIso,
+            ...(snippet ? { snippet } : {}),
+          });
+          record = Object.freeze(parsed);
+          records.set(url, record);
+        }
+        if (citedSpan.status !== "valid") {
+          incompleteReason ??= citedSpan.status === "oversize" ? "oversize-span" : "missing-span";
+          continue;
+        }
+        const normalizedSnippet = citedSpan.text;
+        const spanKey = `${record.id}\u0000${normalizedSnippet.toLocaleLowerCase("en-US")}`;
+        if (uniqueSpans.has(spanKey)) continue;
+        uniqueSpans.add(spanKey);
+        spans.push(
+          Object.freeze({
+            sourceId: record.id,
+            ordinal: spans.length,
+            text: normalizedSnippet,
+          }),
+        );
       }
     }
   }
 
-  return Object.freeze([...records.values()]);
+  const frozenSpans = Object.freeze([...spans]);
+  const searchEvidence: SearchEvidenceProjection = incompleteReason
+    ? Object.freeze({ status: "incomplete", reason: incompleteReason, spans: frozenSpans })
+    : Object.freeze({ status: "complete", spans: frozenSpans });
+  return Object.freeze({
+    sources: Object.freeze([...records.values()]),
+    searchEvidence,
+  });
 }
 
 function normalizeWeatherSources(sources: readonly SourceRecord[] | undefined): readonly SourceRecord[] {
@@ -489,6 +603,23 @@ function combineSources(
     if (!records.has(source.id)) records.set(source.id, source);
   }
   return Object.freeze([...records.values()]);
+}
+
+function reconcileSearchEvidence(
+  searchEvidence: SearchEvidenceProjection,
+  sources: readonly SourceRecord[],
+): SearchEvidenceProjection {
+  const issuedSourceIds = new Set(sources.map((source) => source.id));
+  const spans = Object.freeze(
+    searchEvidence.spans.filter((span) => issuedSourceIds.has(span.sourceId)),
+  );
+  if (spans.length !== searchEvidence.spans.length) {
+    return Object.freeze({ status: "incomplete", reason: "source-capacity", spans });
+  }
+  if (searchEvidence.status === "incomplete") {
+    return Object.freeze({ ...searchEvidence, spans });
+  }
+  return Object.freeze({ status: "complete", spans });
 }
 
 export async function runGeminiRetrieval({
@@ -526,11 +657,13 @@ export async function runGeminiRetrieval({
 
     if (functionCalls.length === 0) {
       const outputText = interaction.output_text ?? outputTextFromSteps(returnedSteps);
-      const searchSources = normalizeGoogleSearchSources(allModelSteps, now());
+      const searchGrounding = normalizeGoogleSearchGrounding(allModelSteps, now());
+      const sources = combineSources(weatherSources, searchGrounding.sources);
       return {
         outputText,
         steps: Object.freeze([...allModelSteps]),
-        sources: combineSources(weatherSources, searchSources),
+        sources,
+        searchEvidence: reconcileSearchEvidence(searchGrounding.searchEvidence, sources),
         evidence: Object.freeze([...evidence]),
         toolRounds,
       };

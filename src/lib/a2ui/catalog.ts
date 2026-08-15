@@ -1,6 +1,6 @@
 import type { ReactComponentImplementation } from "@a2ui/react/v0_9";
 import { Catalog } from "@a2ui/web_core/v0_9";
-import { CATALOG_ID } from "@shared/constants";
+import { CATALOG_ID_V2, CATALOG_ID_V3 } from "@shared/constants";
 import { comparisonComponents } from "./components/comparison";
 import { layoutComponents } from "./components/layout";
 import { researchComponents } from "./components/research";
@@ -14,4 +14,6 @@ export const trustedComponents: readonly ReactComponentImplementation[] = Object
   ...researchComponents,
 ]);
 
-export const trustedCatalog = new Catalog(CATALOG_ID, [...trustedComponents]);
+export const trustedCatalog = new Catalog(CATALOG_ID_V2, [...trustedComponents]);
+export const trustedCatalogV3 = new Catalog(CATALOG_ID_V3, [...trustedComponents]);
+export const trustedCatalogs = Object.freeze([trustedCatalog, trustedCatalogV3]);
