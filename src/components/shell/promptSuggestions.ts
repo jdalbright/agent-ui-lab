@@ -7,58 +7,58 @@ export interface PromptSuggestion {
 
 export const DEFAULT_PROMPT_SUGGESTIONS: readonly PromptSuggestion[] = [
   {
-    id: "weather-raleigh-walk",
+    id: "weather-saturday-ride",
     label: "Weather",
-    prompt: "When should I take a walk in Raleigh today?",
+    prompt: "Plan my Saturday in Raleigh: when is the best 3-hour window for a bike ride, and what should I bring?",
   },
   {
-    id: "weather-city-comparison",
+    id: "comparison-weekend-getaway",
     label: "Comparison",
-    prompt: "Compare this weekend’s weather in Raleigh and Asheville.",
+    prompt: "Raleigh, Asheville, or Wilmington: which has the best weather for a getaway this Saturday and Sunday?",
   },
   {
-    id: "gemini-current-research",
+    id: "research-gemini-hydrogen",
     label: "Research",
-    prompt: "What changed in Gemini 3.6 Flash?",
+    prompt: "What's new in Gemini 4 Hydrogen, and how does it compare with Gemini 3.8 Flash?",
   },
 ];
 
-/** Six secondary prompts that showcase the recipes not covered by the starters. */
+/** Six secondary prompts that show off other layouts and recipes. */
 export const MORE_EXAMPLE_PROMPT_SUGGESTIONS: readonly PromptSuggestion[] = [
   {
-    id: "weather-raleigh-snapshot",
+    id: "weather-raleigh-jacket",
     label: "Weather",
-    prompt: "What does the weather look like in Raleigh right now?",
-    description: "A concise current-conditions snapshot.",
+    prompt: "What's it like in Raleigh right now, and do I need a jacket?",
+    description: "A current-conditions snapshot with a direct answer.",
   },
   {
-    id: "weather-raleigh-outlook",
+    id: "weather-chicago-packing",
     label: "Weather",
-    prompt: "Show Seattle’s seven-day weather outlook in Celsius.",
-    description: "A forecast-led view that preserves the requested range and units.",
+    prompt: "I land in Chicago Thursday morning for a four-day trip. Show me what to pack for each day.",
+    description: "A day-by-day outlook turned into packing advice.",
   },
   {
-    id: "comparison-airline-verdict",
+    id: "comparison-three-city-trend",
     label: "Comparison",
-    prompt: "Which airline has the better carry-on policy: Southwest or Delta?",
-    description: "A grounded verdict with the decisive policy differences.",
+    prompt: "Chart the next five days of highs and rain chances for Seattle, Denver, and Miami.",
+    description: "A three-city chart with a table alternative.",
   },
   {
-    id: "comparison-a2ui-scorecard",
+    id: "comparison-hosting-scorecard",
     label: "Comparison",
-    prompt: "Compare React and Angular for an A2UI v0.9.1 client across setup, ecosystem, accessibility, and bundle tradeoffs.",
-    description: "A criterion-by-criterion implementation scorecard.",
+    prompt: "Compare Vercel and Cloudflare Pages for a small business website: free-tier limits, pricing, and performance.",
+    description: "A criterion-by-criterion scorecard from official docs.",
   },
   {
     id: "research-artemis-timeline",
     label: "Research",
-    prompt: "Build a timeline of the major Artemis II schedule announcements.",
+    prompt: "Build a timeline of NASA's Artemis II schedule announcements since 2024.",
     description: "A sourced chronology of how the mission schedule changed.",
   },
   {
-    id: "research-pluto-claims",
+    id: "research-four-day-week",
     label: "Research",
-    prompt: "What evidence supports and challenges Pluto’s classification as a dwarf planet?",
-    description: "Claims organized by supporting and challenging evidence.",
+    prompt: "Do four-day work weeks improve productivity? Weigh the evidence on both sides.",
+    description: "Supporting and challenging evidence, side by side.",
   },
 ];

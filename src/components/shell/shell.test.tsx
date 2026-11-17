@@ -96,14 +96,12 @@ describe("deterministic shell", () => {
       screen.getByText("Ask naturally. The interface will shape itself around the answer."),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", { name: /When should I take a walk in Raleigh today\?/i }),
+      screen.getByRole("button", { name: /Plan my Saturday in Raleigh/i }),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", {
-        name: /Compare this weekend’s weather in Raleigh and Asheville\./i,
-      }),
+      screen.getByRole("button", { name: /Raleigh, Asheville, or Wilmington/i }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: /What changed in Gemini 3\.6 Flash\?/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /What's new in Gemini 4 Hydrogen/i })).toBeVisible();
   });
 
   it("returns the complete suggestion object", async () => {

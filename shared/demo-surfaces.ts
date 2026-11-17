@@ -1,5 +1,22 @@
 import { classifyCapability, type CapabilityDecision } from "./capability.js";
 import { createCapabilityBoundarySpec, createClarificationSpec } from "./capability-surfaces.js";
+import {
+  chicagoPackingSpec,
+  cloudflarePagesSource,
+  flash38Source,
+  fourDaySkepticSource,
+  fourDayWeekClaimsSpec,
+  fourDayWeekSource,
+  hostingScorecardSpec,
+  hydrogenBriefSpec,
+  hydrogenSource,
+  raleighJacketSpec,
+  saturdayRideSpec,
+  showcaseWeatherSource,
+  threeCityTrendSpec,
+  vercelLimitsSource,
+  weekendGetawaySpec,
+} from "./demo-showcase-surfaces.js";
 import { parseStrictFormattedNumber } from "./strict-numeric.js";
 import type {
   SourceRecord,
@@ -997,6 +1014,47 @@ function normalizeShowcasePrompt(prompt: string): string {
 }
 
 const showcaseSurfaces = new Map<string, DemoSurface>([
+  // Current starter and example prompts (see promptSuggestions.ts).
+  [
+    normalizeShowcasePrompt("Plan my Saturday in Raleigh: when is the best 3-hour window for a bike ride, and what should I bring?"),
+    { spec: saturdayRideSpec, sources: [showcaseWeatherSource] },
+  ],
+  [
+    normalizeShowcasePrompt("Raleigh, Asheville, or Wilmington: which has the best weather for a getaway this Saturday and Sunday?"),
+    { spec: weekendGetawaySpec, sources: [showcaseWeatherSource] },
+  ],
+  [
+    normalizeShowcasePrompt("What's new in Gemini 4 Hydrogen, and how does it compare with Gemini 3.8 Flash?"),
+    { spec: hydrogenBriefSpec, sources: [hydrogenSource, flash38Source] },
+  ],
+  [
+    normalizeShowcasePrompt("What's it like in Raleigh right now, and do I need a jacket?"),
+    { spec: raleighJacketSpec, sources: [showcaseWeatherSource] },
+  ],
+  [
+    normalizeShowcasePrompt("I land in Chicago Thursday morning for a four-day trip. Show me what to pack for each day."),
+    { spec: chicagoPackingSpec, sources: [showcaseWeatherSource] },
+  ],
+  [
+    normalizeShowcasePrompt("Chart the next five days of highs and rain chances for Seattle, Denver, and Miami."),
+    { spec: threeCityTrendSpec, sources: [showcaseWeatherSource] },
+  ],
+  [
+    normalizeShowcasePrompt("Compare Vercel and Cloudflare Pages for a small business website: free-tier limits, pricing, and performance."),
+    { spec: hostingScorecardSpec, sources: [cloudflarePagesSource, vercelLimitsSource] },
+  ],
+  [
+    normalizeShowcasePrompt("Build a timeline of NASA's Artemis II schedule announcements since 2024."),
+    {
+      spec: artemisTimelineDemoSpec,
+      sources: [artemis2024Source, artemisDelaySource, artemisSource],
+    },
+  ],
+  [
+    normalizeShowcasePrompt("Do four-day work weeks improve productivity? Weigh the evidence on both sides."),
+    { spec: fourDayWeekClaimsSpec, sources: [fourDayWeekSource, fourDaySkepticSource] },
+  ],
+  // Earlier prompts, kept so existing tests and bookmarked demos still replay.
   [
     normalizeShowcasePrompt("When should I take a walk in Raleigh today?"),
     { spec: weatherDemoSpec, sources: [weatherSource] },

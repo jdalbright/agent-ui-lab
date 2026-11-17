@@ -24,42 +24,15 @@ type ShowcaseExpectation = {
 };
 
 const EXPECTED_BY_PROMPT_ID: Readonly<Record<string, ShowcaseExpectation>> = {
-  "weather-raleigh-walk": {
-    kind: "weather",
-    recipeId: "weather.decision",
-  },
-  "weather-city-comparison": {
-    kind: "comparison",
-    recipeId: "comparison.trend",
-  },
-  "gemini-current-research": {
-    kind: "research",
-    recipeId: "research.brief",
-  },
-  "weather-raleigh-snapshot": {
-    kind: "weather",
-    recipeId: "weather.snapshot",
-  },
-  "weather-raleigh-outlook": {
-    kind: "weather",
-    recipeId: "weather.outlook",
-  },
-  "comparison-airline-verdict": {
-    kind: "comparison",
-    recipeId: "comparison.verdict",
-  },
-  "comparison-a2ui-scorecard": {
-    kind: "comparison",
-    recipeId: "comparison.scorecard",
-  },
-  "research-artemis-timeline": {
-    kind: "research",
-    recipeId: "research.timeline",
-  },
-  "research-pluto-claims": {
-    kind: "research",
-    recipeId: "research.claims",
-  },
+  "weather-saturday-ride": { kind: "weather", recipeId: "weather.decision" },
+  "comparison-weekend-getaway": { kind: "comparison", recipeId: "comparison.verdict" },
+  "research-gemini-hydrogen": { kind: "research", recipeId: "research.brief" },
+  "weather-raleigh-jacket": { kind: "weather", recipeId: "weather.snapshot" },
+  "weather-chicago-packing": { kind: "weather", recipeId: "weather.outlook" },
+  "comparison-three-city-trend": { kind: "comparison", recipeId: "comparison.trend" },
+  "comparison-hosting-scorecard": { kind: "comparison", recipeId: "comparison.scorecard" },
+  "research-artemis-timeline": { kind: "research", recipeId: "research.timeline" },
+  "research-four-day-week": { kind: "research", recipeId: "research.claims" },
 };
 
 const SHOWCASE_PROMPTS: readonly PromptSuggestion[] = [

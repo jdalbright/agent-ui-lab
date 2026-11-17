@@ -1,9 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-const WEATHER_PROMPT = "When should I take a walk in Raleigh today?";
-const COMPARISON_PROMPT = "Compare this weekend’s weather in Raleigh and Asheville.";
-const RESEARCH_PROMPT = "What changed in Gemini 3.6 Flash?";
+const WEATHER_PROMPT =
+  "Plan my Saturday in Raleigh: when is the best 3-hour window for a bike ride, and what should I bring?";
+const COMPARISON_PROMPT =
+  "Raleigh, Asheville, or Wilmington: which has the best weather for a getaway this Saturday and Sunday?";
+const RESEARCH_PROMPT = "What's new in Gemini 4 Hydrogen, and how does it compare with Gemini 3.8 Flash?";
 
 async function forceRecordedProviderFixture(page: Page) {
   await page.route("**/api/agent", (route) => route.abort("connectionrefused"));
@@ -116,27 +118,19 @@ test.describe("recorded suggestion surfaces", () => {
     await runSuggestion(page, WEATHER_PROMPT);
 
     await expect(page.getByRole("region", { name: "Weather for Raleigh, NC" })).toBeVisible();
-    await expect(page.getByText("Best walk window", { exact: true })).toBeVisible();
-    await expect(page.getByText("7:30–8:30 PM", { exact: true })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Hourly", exact: true })).toBeVisible();
-    await expect(
-      page.getByRole("region", { name: "5-day outlook", exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText("Best 3-hour ride window", { exact: true })).toBeVisible();
+    await expect(page.getByText("11 AM–2 PM", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Saturday hourly", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Weekend", exact: true })).toBeVisible();
     await expect(page.locator("[data-a2ui-version='v0.9.1']")).toBeVisible();
   });
 
-  test("comparison suggestion renders summary, table, and accessible chart data", async ({ page }) => {
+  test("comparison suggestion renders a verdict with a comparison table", async ({ page }) => {
     await openLabWithFixture(page);
     await runSuggestion(page, COMPARISON_PROMPT);
 
-    await expect(page.getByText("Asheville is the cooler outdoor pick", { exact: true })).toBeVisible();
-    await expect(
-      page.getByRole("region", { name: "Saturday temperature table alternative" }),
-    ).toBeVisible();
-    await expect(page.getByRole("img", { name: "Saturday temperature comparison" })).toBeVisible();
-    await expect(
-      page.getByRole("region", { name: "Saturday temperature comparison data" }),
-    ).toBeVisible();
+    await expect(page.getByText("Wilmington has the mildest, driest weekend", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Weekend forecast by city" })).toBeVisible();
   });
 
   test("research suggestion renders evidence with immutable source links", async ({ page }) => {
@@ -144,15 +138,15 @@ test.describe("recorded suggestion surfaces", () => {
     await runSuggestion(page, RESEARCH_PROMPT);
 
     await expect(
-      page.getByText("Gemini 3.6 Flash sharpened the fast agentic tier", { exact: true }),
+      page.getByText("Gemini 4 Hydrogen replaces 3.8 Flash as Google's fast model", { exact: true }),
     ).toBeVisible();
-    await expect(page.getByText("What matters", { exact: true })).toBeVisible();
+    await expect(page.getByText("What changed", { exact: true })).toBeVisible();
     const modelSource = page
-      .getByRole("link", { name: "Gemini 3.6 Flash model documentation", exact: true })
+      .getByRole("link", { name: "Developer's guide to Gemini 4 Hydrogen", exact: true })
       .last();
     await expect(modelSource).toHaveAttribute(
       "href",
-      "https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash",
+      "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-hydrogen",
     );
     await expect(modelSource).toHaveAttribute("rel", /noopener/);
   });
