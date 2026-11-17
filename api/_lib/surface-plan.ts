@@ -3501,6 +3501,9 @@ function validatedFallbackPlan(
   return validation.plan;
 }
 
+/** Research fallbacks list at most this many sources so they stay inside the content budget. */
+const RESEARCH_FALLBACK_ITEMS = 4;
+
 export function buildFallbackSurfacePlan(input: BuildFallbackSurfacePlanInput): SurfacePlan {
   const { kind, prompt, retrieval } = input;
   const sourceIds = retrieval.sources.slice(0, LIMITS.sources).map((source) => source.id);
@@ -3907,7 +3910,9 @@ export function buildFallbackSurfacePlan(input: BuildFallbackSurfacePlanInput): 
     type: "lead" as const,
     variant: recipeId === "research.brief" ? "brief" as const : "feature" as const,
     title: limited(prompt, 220, "Research brief"),
-    summary: limited(retrieval.outputText, 1_200, "The available sources provide a bounded research answer."),
+    // Title (≤220) plus summary stays under the detailed lead budget, which the
+    // composer's fallback density retry can always reach.
+    summary: limited(retrieval.outputText, 420, "The available sources provide a bounded research answer."),
     sourceIds,
   };
   const modules: Array<z.infer<typeof researchModuleSchema>> = [lead];
@@ -3915,10 +3920,10 @@ export function buildFallbackSurfacePlan(input: BuildFallbackSurfacePlanInput): 
     modules.push({
       type: "timeline",
       label: "Available source chronology",
-      items: retrieval.sources.slice(0, LIMITS.sources).map((source) => ({
+      items: retrieval.sources.slice(0, RESEARCH_FALLBACK_ITEMS).map((source) => ({
         date: "Date not established",
-        title: limited(source.title, 180, "Issued source"),
-        detail: "The retrieved evidence does not establish a trustworthy event date for this source.",
+        title: limited(source.title, 120, "Issued source"),
+        detail: "No trustworthy event date in the retrieved evidence.",
         sourceId: source.id,
       })),
     });
@@ -3927,9 +3932,9 @@ export function buildFallbackSurfacePlan(input: BuildFallbackSurfacePlanInput): 
       type: "evidence",
       variant: "stack",
       label: "Available evidence",
-      items: retrieval.sources.slice(0, LIMITS.sources).map((source) => ({
-        title: limited(source.title, 180, "Issued source"),
-        finding: limited(source.title, 400, "Issued source"),
+      items: retrieval.sources.slice(0, RESEARCH_FALLBACK_ITEMS).map((source) => ({
+        title: limited(source.title, 120, "Issued source"),
+        finding: limited(source.title, 120, "Issued source"),
         stance: "neutral" as const,
         sourceId: source.id,
       })),

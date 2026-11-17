@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ClientContext, SourceRecord } from "../../shared/schemas.js";
+import {
+  SURFACE_CONTENT_BUDGETS,
+  evaluateSurfaceContentBudget,
+} from "../../shared/surface-content-budget.js";
 import { validateSurfaceSpec } from "../../shared/surface-validation.js";
 import type { GeminiRetrievalResult } from "./gemini.js";
 import {
@@ -1761,6 +1765,26 @@ describe("domain-specific deterministic SurfacePlan fallbacks", () => {
     expect(serialized).toContain("JavaScript");
     expect(serialized).not.toMatch(/https?:\/\/|www\.|<\/?[a-z]|\b(?:javascript|data|vbscript)\s*:/i);
     expect(() => compileSurfacePlan({ plan, retrieval: unsafeRetrieval, clientContext, prompt })).not.toThrow();
+  });
+
+  it.each([
+    "Build a timeline of NASA's crewed Artemis missions: what has flown, what's next, and what slipped.",
+    "Do four-day work weeks improve productivity? Weigh the evidence on both sides.",
+  ])("keeps a long research fallback inside the detailed content budget: %s", (prompt) => {
+    const longRetrieval = structuredClone(researchRetrieval);
+    longRetrieval.outputText = "A detailed sourced finding about the topic. ".repeat(60);
+    const base = longRetrieval.sources[0];
+    longRetrieval.sources = Array.from({ length: 8 }, (_, index) => ({
+      ...base,
+      id: `src_longsource${index}`,
+      url: `https://example.com/source-${index}`,
+      title: `A very long official source title number ${index} `.repeat(6).trim(),
+    }));
+
+    const plan = buildFallbackSurfacePlan({ kind: "research", prompt, retrieval: longRetrieval, clientContext });
+    const spec = compileSurfacePlan({ plan, retrieval: longRetrieval, clientContext, prompt });
+
+    expect(evaluateSurfaceContentBudget(spec, SURFACE_CONTENT_BUDGETS.detailed).passed).toBe(true);
   });
 
   it("sanitizes weather-provider prose copied into a deterministic fallback plan", () => {
