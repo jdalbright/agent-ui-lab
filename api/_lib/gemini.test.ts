@@ -438,7 +438,7 @@ describe("runGeminiRetrieval", () => {
 
     expect(requests).toHaveLength(2);
     expect(requests[0]).toMatchObject({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.8-flash",
       store: false,
     });
     expect(requests[0]?.previous_interaction_id).toBeUndefined();

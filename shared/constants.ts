@@ -1,4 +1,4 @@
-export const MODEL_ID = "gemini-3.6-flash" as const;
+export const MODEL_ID = "gemini-3.8-flash" as const;
 export const A2UI_VERSION = "v0.9.1" as const;
 export const A2UI_PROTOCOL_VERSION = "0.9.1" as const;
 export const CATALOG_ID_V2 = "https://lab.jalbright.dev/catalogs/editorial/v2" as const;

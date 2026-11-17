@@ -51,7 +51,7 @@ The function applies two fixed-window limits: 20 requests per 10 minutes and 100
 
 ### 3. Retrieval
 
-The first Gemini Interactions call uses `gemini-3.6-flash`, the stable `v1` API, `store: false`, and only two approved tools:
+The first Gemini Interactions call uses `gemini-3.8-flash`, the stable `v1` API, `store: false`, and only two approved tools:
 
 - `get_weather_bundle`, a typed custom function
 - Google Search grounding
