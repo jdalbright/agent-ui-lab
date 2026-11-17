@@ -7,7 +7,7 @@ The first-class surfaces cover weather, comparisons, and grounded current resear
 ## What this demonstrates
 
 - React 19, Vite, TypeScript, and Vercel Functions
-- Gemini `gemini-3.8-flash` through the stable `v1` Interactions API with `store: false`
+- Gemini `gemini-4-hydrogen` (thinking level `medium`) through the stable `v1` Interactions API with `store: false`
 - A2UI v0.9.1 messages rendered through local adapters and versioned trusted React catalogs
 - Stateless function-call continuation with Google Search grounding and normalized Google Weather data
 - Agent-selected recipes plus an opt-in, server-validated generative composition grammar for weather, comparison, and research answers
