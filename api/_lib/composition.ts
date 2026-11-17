@@ -3113,7 +3113,8 @@ export async function composeGenerativeSurfacePlan({
       clientContext,
     );
     if (qualityChecks.some((check) => !check.passed)) {
-      throw new TypeError("The deterministic plan-v2 fallback failed a quality check.");
+      const failed = qualityChecks.filter((check) => !check.passed).map((check) => check.code);
+      throw new TypeError(`The deterministic plan-v2 fallback failed a quality check: ${failed.join(" ")}`);
     }
     return {
       fallbackPlan,
