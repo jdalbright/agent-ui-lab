@@ -36,6 +36,7 @@ import {
   GenerativeSurfacePlanSchema,
   compileGenerativeSurfacePlan,
   evaluateGenerativeSurfacePlanQuality,
+  normalizeGenerativePlanIds,
   validateGenerativeSurfacePlan,
   type GenerativeSurfacePlan,
   type GenerativeSurfaceQualityCode,
@@ -2764,7 +2765,7 @@ function validateGenerativeComposition(
 ): GenerativeValidationFailure | GenerativeValidationSuccess {
   let parsed: unknown;
   try {
-    parsed = normalizeOptionalGenerativePlanNulls(JSON.parse(rawOutput));
+    parsed = normalizeGenerativePlanIds(normalizeOptionalGenerativePlanNulls(JSON.parse(rawOutput)));
   } catch {
     return {
       success: false,

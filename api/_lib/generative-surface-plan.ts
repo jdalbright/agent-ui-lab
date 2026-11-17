@@ -635,3 +635,73 @@ export function evaluateGenerativeSurfacePlanQuality(
       spec.components.length <= LIMITS.surfaceNodes,
   });
 }
+
+const SAFE_ID = /^[a-z][a-z0-9-]{0,63}$/;
+
+function toSafeId(raw: string, used: Set<string>): string {
+  let id = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!/^[a-z]/.test(id)) id = `n-${id}`;
+  id = id.slice(0, 60).replace(/-+$/, "") || "node";
+  let candidate = id;
+  for (let suffix = 2; used.has(candidate); suffix += 1) candidate = `${id}-${suffix}`;
+  used.add(candidate);
+  return candidate;
+}
+
+/**
+ * Rewrites content and layout ids that break the id pattern (for example
+ * `claim_1` or `Lead`) into safe ids, updating every reference consistently.
+ * Valid ids are left unchanged; anything that is not a plan object passes through.
+ */
+export function normalizeGenerativePlanIds(input: unknown): unknown {
+  if (typeof input !== "object" || input === null) return input;
+  const plan = input as {
+    content?: unknown;
+    layout?: { rootId?: unknown; nodes?: unknown };
+  };
+  const content = Array.isArray(plan.content) ? (plan.content as unknown[]) : [];
+  const nodes = Array.isArray(plan.layout?.nodes) ? (plan.layout.nodes as unknown[]) : [];
+  const declared = [...content, ...nodes]
+    .map((entry) => (typeof entry === "object" && entry !== null ? (entry as { id?: unknown }).id : undefined))
+    .filter((id): id is string => typeof id === "string");
+  if (declared.every((id) => SAFE_ID.test(id))) return input;
+
+  const used = new Set(declared.filter((id) => SAFE_ID.test(id)));
+  const mapping = new Map<string, string>();
+  for (const id of declared) {
+    if (!SAFE_ID.test(id) && !mapping.has(id)) mapping.set(id, toSafeId(id, used));
+  }
+  const rename = (value: unknown): unknown =>
+    typeof value === "string" ? mapping.get(value) ?? value : value;
+  const withId = (entry: unknown): unknown =>
+    typeof entry === "object" && entry !== null
+      ? { ...entry, id: rename((entry as { id?: unknown }).id) }
+      : entry;
+
+  return {
+    ...plan,
+    ...(Array.isArray(plan.content) ? { content: content.map(withId) } : {}),
+    ...(plan.layout
+      ? {
+          layout: {
+            ...plan.layout,
+            rootId: rename(plan.layout.rootId),
+            ...(Array.isArray(plan.layout.nodes)
+              ? {
+                  nodes: nodes.map((node) => {
+                    const renamed = withId(node) as { children?: unknown };
+                    return Array.isArray(renamed.children)
+                      ? { ...renamed, children: (renamed.children as unknown[]).map(rename) }
+                      : renamed;
+                  }),
+                }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
