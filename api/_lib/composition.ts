@@ -3093,29 +3093,47 @@ export async function composeGenerativeSurfacePlan({
     const builtFallback = researchChangeManifest
       ? buildResearchChangeFallbackPlan(researchChangeManifest)
       : buildFallbackSurfacePlan({ kind, prompt, retrieval, clientContext });
-    const fallbackPlan = SurfacePlanSchema.parse({
-      ...builtFallback,
-      ...(contract.recipeId ? { recipeId: contract.recipeId } : {}),
-      ...(contract.density ? { density: contract.density } : {}),
-      ...(contract.emphasis ? { emphasis: contract.emphasis } : {}),
-    });
-    const fallbackSpec = compileSurfacePlan({
-      plan: fallbackPlan,
-      retrieval,
-      clientContext,
-      prompt,
-    });
-    const qualityChecks = planQualityChecks(
-      fallbackPlan,
-      fallbackSpec,
-      prompt,
-      retrieval,
-      clientContext,
-    );
-    if (qualityChecks.some((check) => !check.passed)) {
-      const failed = qualityChecks.filter((check) => !check.passed).map((check) => check.code);
+    // The contract's density can be tighter than the content the fallback carries
+    // (for example, a brief density over eight search sources). Try the contract
+    // density first, then progressively roomier budgets before giving up.
+    const densities = [
+      ...new Set([contract.density, builtFallback.density, "balanced", "detailed"]),
+    ].filter((density): density is SurfacePlan["density"] => Boolean(density));
+    let failed: string[] = [];
+    let accepted:
+      | { fallbackPlan: SurfacePlan; fallbackSpec: ReturnType<typeof compileSurfacePlan>; qualityChecks: ReturnType<typeof planQualityChecks> }
+      | undefined;
+    for (const density of densities) {
+      const candidatePlan = SurfacePlanSchema.parse({
+        ...builtFallback,
+        ...(contract.recipeId ? { recipeId: contract.recipeId } : {}),
+        density,
+        ...(contract.emphasis ? { emphasis: contract.emphasis } : {}),
+      });
+      const candidateSpec = compileSurfacePlan({
+        plan: candidatePlan,
+        retrieval,
+        clientContext,
+        prompt,
+      });
+      const candidateChecks = planQualityChecks(
+        candidatePlan,
+        candidateSpec,
+        prompt,
+        retrieval,
+        clientContext,
+      );
+      failed = candidateChecks.filter((check) => !check.passed).map((check) => check.code);
+      if (failed.length === 0) {
+        accepted = { fallbackPlan: candidatePlan, fallbackSpec: candidateSpec, qualityChecks: candidateChecks };
+        break;
+      }
+      if (!failed.every((code) => code === "content_budget")) break;
+    }
+    if (!accepted) {
       throw new TypeError(`The deterministic plan-v2 fallback failed a quality check: ${failed.join(" ")}`);
     }
+    const { fallbackPlan, fallbackSpec, qualityChecks } = accepted;
     return {
       fallbackPlan,
       spec: fallbackSpec,
