@@ -39,6 +39,7 @@ import {
   type GeminiClient,
   type GetWeatherBundleArguments,
 } from "./_lib/gemini.js";
+import { providerErrorReason } from "./_lib/provider-error-reason.js";
 import { getWeatherBundle, type WeatherBundle, type WeatherLocation } from "./_lib/google-weather.js";
 import type { ServerRequest, ServerResponse } from "./_lib/http-types.js";
 import { logEvent } from "./_lib/logger.js";
@@ -749,6 +750,7 @@ export default async function handler(request: ServerRequest, response: ServerRe
       stage: "complete",
       durationMs: Date.now() - startedAt,
       errorCode: providerError ? "PROVIDER_ERROR" : code,
+      errorReason: timedOut ? "deadline" : providerErrorReason(error),
     });
 
     if (!timedOut) {
