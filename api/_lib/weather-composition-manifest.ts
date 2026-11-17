@@ -522,6 +522,24 @@ function matchedSourceId(uri: string | undefined, sources: readonly SourceRecord
   return sources.find((source) => canonicalUrl(source.url) === target)?.id;
 }
 
+/** Raised when weather tool output does not fit the composition manifest schema. */
+export class WeatherProjectionError extends TypeError {
+  readonly issuePaths: readonly string[];
+
+  constructor(issues: readonly z.ZodIssue[]) {
+    super("Weather evidence cannot be projected safely for composition.");
+    this.name = "WeatherProjectionError";
+    this.issuePaths = Object.freeze(
+      issues.slice(0, 4).map((issue) => {
+        const path = issue.path
+          .map((segment) => (typeof segment === "number" ? "n" : String(segment)))
+          .join(".");
+        return `${path || "root"}/${issue.code}`;
+      }),
+    );
+  }
+}
+
 function parseWeatherState(retrieval: GeminiRetrievalResult): {
   locations: ParsedLocation[];
   activityWindows: ParsedActivityWindow[];
@@ -531,7 +549,7 @@ function parseWeatherState(retrieval: GeminiRetrievalResult): {
   const activityWindows: ParsedActivityWindow[] = [];
   for (const evidence of retrieval.evidence) {
     const parsed = weatherResultSchema.safeParse(evidence.result);
-    if (!parsed.success) throw new TypeError("Weather evidence cannot be projected safely for composition.");
+    if (!parsed.success) throw new WeatherProjectionError(parsed.error.issues);
     locations.push(...parsed.data.locations);
     activityWindows.push(...parsed.data.activityWindows);
   }
