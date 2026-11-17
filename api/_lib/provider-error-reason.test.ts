@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { CompositionValidationError } from "./composition.js";
 import { GeminiProviderError, GeminiToolRoundLimitError } from "./gemini.js";
 import { providerErrorReason } from "./provider-error-reason.js";
 
@@ -43,6 +44,24 @@ describe("providerErrorReason", () => {
       status: 400,
     });
     expect(providerErrorReason(error)).toBe("ApiError:400");
+  });
+
+  it("slugs the first composition issue without quoted values or numbers", () => {
+    const error = new CompositionValidationError([
+      'Component "Raleigh secret" references 3 unknown children.',
+    ]);
+    const reason = providerErrorReason(error);
+    expect(reason).toBe("composition:component_references_unknown_children");
+  });
+
+  it("reports the first app stack frame for runtime errors", () => {
+    const error = new TypeError("Cannot read properties of undefined (reading 'temperature')");
+    error.stack = [
+      "TypeError: Cannot read properties of undefined (reading 'temperature')",
+      "    at compileWeather (/var/task/node_modules/lib/x.js:1:1)",
+      "    at buildTable (/var/task/api/_lib/composition.js:2417:31)",
+    ].join("\n");
+    expect(providerErrorReason(error)).toBe("TypeError@composition.js:2417");
   });
 
   it("handles non-errors", () => {
