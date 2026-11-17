@@ -3,6 +3,7 @@ import { z } from "zod";
 import { CompositionValidationError } from "./composition.js";
 import { GeminiProviderError, GeminiToolRoundLimitError } from "./gemini.js";
 import { providerErrorReason } from "./provider-error-reason.js";
+import { WeatherProjectionError } from "./weather-composition-manifest.js";
 
 describe("providerErrorReason", () => {
   it("names the tool-round limit", () => {
@@ -62,6 +63,27 @@ describe("providerErrorReason", () => {
       "    at buildTable (/var/task/api/_lib/composition.js:2417:31)",
     ].join("\n");
     expect(providerErrorReason(error)).toBe("TypeError@composition.js:2417");
+  });
+
+  it("reports weather projection schema paths with indexes collapsed", () => {
+    const parsed = z
+      .object({ alerts: z.array(z.object({ description: z.string().max(5) })) })
+      .safeParse({ alerts: [{ description: "Frost advisory text that is long" }] });
+    const error = new WeatherProjectionError(parsed.error?.issues ?? []);
+    expect(providerErrorReason(error)).toBe("weather_projection:alerts.n.description/too_big");
+  });
+
+  it("follows the cause of a failed fallback", () => {
+    const cause = new WeatherProjectionError([
+      { code: "too_big", path: ["locations", 0, "daily"], message: "x", maximum: 10, inclusive: true, type: "array" },
+    ]);
+    const error = new CompositionValidationError(
+      ["The deterministic plan-v2 fallback could not be compiled safely."],
+      { cause },
+    );
+    expect(providerErrorReason(error)).toBe(
+      "composition:the_deterministic_plan-v_fallback_could_not_be_compiled<-weather_projection:locations.n.daily/too_big",
+    );
   });
 
   it("handles non-errors", () => {

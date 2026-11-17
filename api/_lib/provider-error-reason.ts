@@ -1,8 +1,9 @@
 import { ZodError } from "zod";
 import { CompositionValidationError } from "./composition.js";
 import { GeminiProviderError, GeminiToolRoundLimitError } from "./gemini.js";
+import { WeatherProjectionError } from "./weather-composition-manifest.js";
 
-const MAX_REASON_LENGTH = 72;
+const MAX_REASON_LENGTH = 160;
 
 /**
  * Maps a pipeline failure to a short, content-free reason for operational logs.
@@ -30,8 +31,13 @@ export function providerErrorReason(error: unknown): string {
     return "gemini_provider_other";
   }
 
+  if (error instanceof WeatherProjectionError) {
+    return bounded(`weather_projection:${error.issuePaths.map(safeLabelPath).join(",")}`);
+  }
+
   if (error instanceof CompositionValidationError) {
-    return bounded(`composition:${issueSlug(error.issues[0])}`);
+    const base = `composition:${issueSlug(error.issues[0])}`;
+    return bounded(error.cause === undefined ? base : `${base}<-${providerErrorReason(error.cause)}`);
   }
 
   if (error instanceof Error) {
@@ -76,6 +82,10 @@ function zodPaths(cause: unknown): string {
     .slice(0, 4)
     .map((issue) => `${issue.path.map(String).map(safeLabel).join(".") || "root"}/${safeLabel(issue.code)}`);
   return paths.join(",") || "unknown";
+}
+
+function safeLabelPath(value: string): string {
+  return value.replace(/[^A-Za-z0-9_./-]/g, "").slice(0, 48) || "x";
 }
 
 function safeLabel(value: string): string {

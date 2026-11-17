@@ -675,8 +675,8 @@ type CompositionValidation = ValidationFailure | ValidationSuccess;
 export class CompositionValidationError extends Error {
   readonly issues: readonly string[];
 
-  constructor(issues: readonly string[]) {
-    super("Gemini could not produce a valid SurfaceSpec after one repair attempt.");
+  constructor(issues: readonly string[], options?: ErrorOptions) {
+    super("Gemini could not produce a valid SurfaceSpec after one repair attempt.", options);
     this.name = "CompositionValidationError";
     this.issues = Object.freeze([...issues]);
   }
@@ -2687,10 +2687,10 @@ export async function composeSurfacePlan({
         compilerResult: "deterministic-fallback",
       },
     };
-  } catch {
+  } catch (error) {
     throw new CompositionValidationError([
       "The deterministic domain fallback could not be compiled safely.",
-    ]);
+    ], { cause: error });
   }
 }
 
@@ -3136,9 +3136,9 @@ export async function composeGenerativeSurfacePlan({
         compilerResult: "deterministic-fallback",
       },
     };
-  } catch {
+  } catch (error) {
     throw new CompositionValidationError([
       "The deterministic plan-v2 fallback could not be compiled safely.",
-    ]);
+    ], { cause: error });
   }
 }
