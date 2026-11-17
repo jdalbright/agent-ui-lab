@@ -51,7 +51,7 @@ The function applies two fixed-window limits: 20 requests per 10 minutes and 100
 
 ### 3. Retrieval
 
-The first Gemini Interactions call uses `gemini-4-hydrogen` (thinking level `medium`), the stable `v1` API, `store: false`, and only two approved tools:
+The first Gemini Interactions call uses `gemini-4-hydrogen` (thinking level `low` by default, tunable with `GEMINI_RETRIEVAL_THINKING` and `GEMINI_COMPOSITION_THINKING`), the stable `v1` API, `store: false`, and only two approved tools:
 
 - `get_weather_bundle`, a typed custom function
 - Google Search grounding

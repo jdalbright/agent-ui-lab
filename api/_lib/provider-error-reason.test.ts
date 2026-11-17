@@ -56,13 +56,13 @@ describe("providerErrorReason", () => {
   });
 
   it("reports the first app stack frame for runtime errors", () => {
-    const error = new TypeError("Cannot read properties of undefined (reading 'temperature')");
+    const error = new TypeError("Cannot build valid weather fallback: Missing requested day 3.");
     error.stack = [
-      "TypeError: Cannot read properties of undefined (reading 'temperature')",
+      "TypeError: Cannot build valid weather fallback: Missing requested day 3.",
       "    at compileWeather (/var/task/node_modules/lib/x.js:1:1)",
       "    at buildTable (/var/task/api/_lib/composition.js:2417:31)",
     ].join("\n");
-    expect(providerErrorReason(error)).toBe("TypeError@composition.js:2417");
+    expect(providerErrorReason(error)).toBe("TypeError@composition.js:2417:missing_requested_day");
   });
 
   it("reports weather projection schema paths with indexes collapsed", () => {
@@ -82,7 +82,7 @@ describe("providerErrorReason", () => {
       { cause },
     );
     expect(providerErrorReason(error)).toBe(
-      "composition:the_deterministic_plan-v_fallback_could_not_be_compiled<-weather_projection:locations.n.daily/too_big",
+      "composition:the_deterministic_plan-v_fallback_could_not_be_compiled_safely<-weather_projection:locations.n.daily/too_big",
     );
   });
 

@@ -43,7 +43,8 @@ export function providerErrorReason(error: unknown): string {
   if (error instanceof Error) {
     const frame = firstAppFrame(error.stack);
     if (frame && !(typeof (error as { status?: unknown }).status === "number")) {
-      return bounded(`${safeLabel(error.name)}@${frame}`);
+      const detail = error.message.includes(":") ? error.message.slice(error.message.indexOf(":") + 1) : "";
+      return bounded(`${safeLabel(error.name)}@${frame}${detail ? `:${issueSlug(detail)}` : ""}`);
     }
     const httpStatus = (error as { status?: unknown }).status;
     const suffix = typeof httpStatus === "number" ? `:${httpStatus}` : "";
@@ -62,7 +63,7 @@ function issueSlug(issue: string | undefined): string {
     .replace(/[^a-z\s-]/g, " ")
     .split(/\s+/)
     .filter(Boolean)
-    .slice(0, 8);
+    .slice(0, 12);
   return words.join("_") || "unknown";
 }
 

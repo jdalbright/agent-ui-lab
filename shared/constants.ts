@@ -1,6 +1,11 @@
 export const MODEL_ID = "gemini-4-hydrogen" as const;
-// Hydrogen defaults to "high" thinking; "medium" keeps UI composition fast.
-export const THINKING_LEVEL = "medium" as const;
+// Hydrogen defaults to "high" thinking. Retrieval and composition default to "low"
+// to stay inside the request deadline; GEMINI_RETRIEVAL_THINKING and
+// GEMINI_COMPOSITION_THINKING override them per deployment.
+export const THINKING_LEVELS = ["low", "medium", "high", "xhigh"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const DEFAULT_RETRIEVAL_THINKING: ThinkingLevel = "low";
+export const DEFAULT_COMPOSITION_THINKING: ThinkingLevel = "low";
 export const A2UI_VERSION = "v0.9.1" as const;
 export const A2UI_PROTOCOL_VERSION = "0.9.1" as const;
 export const CATALOG_ID_V2 = "https://lab.jalbright.dev/catalogs/editorial/v2" as const;
