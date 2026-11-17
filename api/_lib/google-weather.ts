@@ -300,6 +300,21 @@ function integerInRange(value: number | undefined, fallback: number, minimum: nu
   return resolved;
 }
 
+/** Downstream composition schemas cap alert text; official alerts often run longer. */
+export const ALERT_TEXT_LIMITS = { title: 160, description: 700, sourceName: 160 } as const;
+
+/** Shortens text to at most `max` characters, preferring a sentence or word boundary. */
+export function clipText(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const room = max - 1;
+  const head = value.slice(0, room);
+  const sentenceEnd = Math.max(head.lastIndexOf(". "), head.lastIndexOf(".\n"));
+  if (sentenceEnd >= room * 0.6) return head.slice(0, sentenceEnd + 1);
+  const space = head.lastIndexOf(" ");
+  const cut = space >= room * 0.6 ? head.slice(0, space) : head;
+  return `${cut.trimEnd()}…`;
+}
+
 function stringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -522,8 +537,9 @@ function normalizeSafetyRecommendations(value: unknown): string[] {
 }
 
 function normalizeAlert(raw: GoogleAlert, index: number): NormalizedWeatherAlert | null {
-  const title = stringValue(raw.alertTitle?.text);
-  if (!title) return null;
+  const fullTitle = stringValue(raw.alertTitle?.text);
+  if (!fullTitle) return null;
+  const title = clipText(fullTitle, ALERT_TEXT_LIMITS.title);
   const start = optionalIso(raw.startTime);
   const expires = optionalIso(raw.expirationTime);
   const eventTypeCode = stringValue(raw.eventType, "WEATHER_EVENT_TYPE_UNSPECIFIED");
@@ -534,7 +550,7 @@ function normalizeAlert(raw: GoogleAlert, index: number): NormalizedWeatherAlert
     eventType: eventTypeCode.includes("_") ? titleFromEnum(eventTypeCode) : eventTypeCode,
     eventTypeCode,
     areaName: stringValue(raw.areaName, "Affected area"),
-    description: stringValue(raw.description, title),
+    description: clipText(stringValue(raw.description, title), ALERT_TEXT_LIMITS.description),
     instructions: Array.isArray(raw.instruction)
       ? raw.instruction.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
       : [],
@@ -545,7 +561,12 @@ function normalizeAlert(raw: GoogleAlert, index: number): NormalizedWeatherAlert
     certainty: alertCertainty(raw.certainty),
     urgency: alertUrgency(raw.urgency),
     ...(stringValue(raw.dataSource?.name, stringValue(raw.dataSource?.publisher))
-      ? { sourceName: stringValue(raw.dataSource?.name, stringValue(raw.dataSource?.publisher)) }
+      ? {
+          sourceName: clipText(
+            stringValue(raw.dataSource?.name, stringValue(raw.dataSource?.publisher)),
+            ALERT_TEXT_LIMITS.sourceName,
+          ),
+        }
       : {}),
     ...(stringValue(raw.dataSource?.publisher)
       ? { sourcePublisherCode: stringValue(raw.dataSource?.publisher) }

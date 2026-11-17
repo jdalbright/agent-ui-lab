@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "../_fixtures/google-weather.json" with { type: "json" };
 import {
+  ALERT_TEXT_LIMITS,
   GoogleWeatherError,
+  clipText,
   clearGoogleWeatherCache,
   getGoogleWeatherBundle,
   getGoogleWeatherBundles,
@@ -237,6 +239,48 @@ describe("Google Weather provider", () => {
     for (const parameter of ["location.latitude", "location.longitude", "languageCode", "pageSize"]) {
       expect(alertUrls[1].searchParams.get(parameter)).toBe(alertUrls[0].searchParams.get(parameter));
     }
+  });
+
+  it("clips long official alert text to the composition limits", async () => {
+    const longDescription = Array.from(
+      { length: 40 },
+      (_, index) => `Sentence ${index + 1} describes frost risk for sensitive plants.`,
+    ).join(" ");
+    const fetchImpl = vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (!url.pathname.endsWith("/publicAlerts:lookup")) return Promise.resolve(responseFor(input));
+      return Promise.resolve(
+        Response.json({
+          regionCode: "US",
+          weatherAlerts: [
+            {
+              ...fixture.alerts.weatherAlerts[0],
+              alertTitle: { text: "Frost Advisory ".repeat(20), languageCode: "en" },
+              description: longDescription,
+            },
+          ],
+        }),
+      );
+    });
+
+    const bundle = await getGoogleWeatherBundle(location, {
+      apiKey: "test-key",
+      fetchImpl,
+      hours: 6,
+      days: 2,
+      cacheTtlMs: 0,
+    });
+
+    const alert = bundle.alerts[0];
+    expect(alert.description.length).toBeLessThanOrEqual(ALERT_TEXT_LIMITS.description);
+    expect(alert.description.endsWith(".")).toBe(true);
+    expect(alert.title.length).toBeLessThanOrEqual(ALERT_TEXT_LIMITS.title);
+  });
+
+  it("clips text at a word boundary when no sentence break fits", () => {
+    expect(clipText("alpha beta gamma delta", 12)).toBe("alpha beta…");
+    expect(clipText("short", 12)).toBe("short");
+    expect(clipText("x".repeat(20), 10)).toHaveLength(10);
   });
 
   it("rejects comparisons above four locations before making a request", async () => {
