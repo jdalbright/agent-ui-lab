@@ -1,4 +1,4 @@
-import { Send } from "lucide-react";
+import { ArrowUp } from "lucide-react";
 import { useId } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 
@@ -84,7 +84,11 @@ export function PromptComposer({
           aria-label={isSubmitting ? "Working" : "Send prompt"}
         >
           <span className="agent-shell-sr-only">{isSubmitting ? "Working" : "Send"}</span>
-          <Send size={18} strokeWidth={1.8} aria-hidden="true" />
+          {isSubmitting ? (
+            <span className="agent-prompt-composer__spinner" aria-hidden="true" />
+          ) : (
+            <ArrowUp size={19} strokeWidth={2.1} aria-hidden="true" />
+          )}
         </button>
       </div>
       <div
@@ -92,7 +96,7 @@ export function PromptComposer({
         data-near-limit={value.length >= maxLength * 0.9 ? "true" : "false"}
       >
         <span id={hintId} className="agent-prompt-composer__hint">
-          Enter to send · Shift + Enter for a new line
+          Press Enter to send. Shift+Enter adds a line.
         </span>
         <span id={countId} className="agent-prompt-composer__count" aria-live="off">
           {value.length.toLocaleString()} / {maxLength.toLocaleString()}

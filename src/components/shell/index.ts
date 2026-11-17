@@ -1,3 +1,8 @@
+export { AnswerProgress } from "./AnswerProgress";
+export type { AnswerProgressProps, AnswerProgressSource } from "./AnswerProgress";
+export { stepForStage } from "./answerProgressSteps";
+export type { AnswerProgressStage, StepKey } from "./answerProgressSteps";
+
 export { AppHeader } from "./AppHeader";
 export type { AppHeaderProps } from "./AppHeader";
 

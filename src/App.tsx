@@ -2,13 +2,18 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import type { A2uiMessage, ClientContext, StreamEvent, TraceRecord } from "@shared/schemas";
 import { LIMITS } from "@shared/constants";
 import {
+  AnswerProgress,
   AppHeader,
   EmptyState,
   InspectorDrawer,
   LiveStatus,
   PromptComposer,
+  stepForStage,
+  type AnswerProgressSource,
+  type AnswerProgressStage,
   type LiveStatusPhase,
   type PromptSuggestion,
+  type StepKey,
   type SafeUiStructureItem,
 } from "@/components/shell";
 import { SurfaceRenderer } from "@/lib/a2ui";
@@ -99,6 +104,10 @@ export default function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [completedMode, setCompletedMode] = useState<string | null>(null);
+  const [progressStage, setProgressStage] = useState<AnswerProgressStage>("accepted");
+  const [progressSource, setProgressSource] = useState<AnswerProgressSource>("unknown");
+  const [stepStartedAt, setStepStartedAt] = useState<Partial<Record<StepKey, number>>>({});
+  const [requestStartedAt, setRequestStartedAt] = useState(0);
   const contextTokenRef = useRef<string | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const lastCoordinatesRef = useRef<ClientContext["coordinates"] | undefined>(undefined);
@@ -120,6 +129,11 @@ export default function App() {
     setTraces([]);
     setNotice(null);
     setCompletedMode(null);
+    const startedAt = Date.now();
+    setRequestStartedAt(startedAt);
+    setProgressStage("accepted");
+    setProgressSource("unknown");
+    setStepStartedAt({ read: startedAt });
     window.scrollTo({ top: 0, behavior: "auto" });
     if (coordinates) lastCoordinatesRef.current = coordinates;
 
@@ -139,8 +153,13 @@ export default function App() {
 
         if (event.type === "status") {
           setStatusMessage(event.message);
+          setProgressStage(event.stage);
+          const step = stepForStage(event.stage);
+          setStepStartedAt((current) => (current[step] ? current : { ...current, [step]: Date.now() }));
         } else if (event.type === "trace") {
           setTraces((current) => [...current.filter((trace) => trace.id !== event.trace.id), event.trace]);
+          if (event.trace.toolName === "get_weather_bundle") setProgressSource("weather");
+          else if (event.trace.toolName === "google_search") setProgressSource("search");
         } else if (event.type === "a2ui") {
           receivedSurface = true;
           setMessages((current) => [...current, event.message]);
@@ -236,6 +255,7 @@ export default function App() {
       onValueChange={setDraft}
       onSubmit={runPrompt}
       isSubmitting={busy}
+      {...(activePrompt ? { placeholder: "Ask a follow-up or something new…" } : {})}
       maxLength={LIMITS.promptCharacters}
       autoFocus={false}
     />
@@ -264,11 +284,12 @@ export default function App() {
             </h1>
 
             {busy && messages.length === 0 ? (
-              <div className="lab-loading" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </div>
+              <AnswerProgress
+                stage={progressStage}
+                source={progressSource}
+                stepStartedAt={stepStartedAt}
+                startedAt={requestStartedAt}
+              />
             ) : null}
 
             {messages.length > 0 ? (
@@ -303,7 +324,11 @@ export default function App() {
             ) : null}
 
             {busy || phase === "error" ? (
-              <div className="lab-answer__status">
+              <div
+                className={
+                  busy && messages.length === 0 ? "lab-answer__status agent-shell-sr-only" : "lab-answer__status"
+                }
+              >
                 <LiveStatus phase={phase} label={statusMessage} />
               </div>
             ) : null}
