@@ -109,6 +109,11 @@ a {
   background: #fff4f2;
 }
 
+.lab-notice[data-kind="limit"] {
+  border-left-color: var(--color-rule-strong);
+  background: var(--color-wash);
+}
+
 .lab-notice[data-partial="true"] {
   border-left-color: var(--color-accent);
   background: var(--color-accent-soft);

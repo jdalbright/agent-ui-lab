@@ -166,6 +166,8 @@ export default function App() {
         } else if (event.type === "context") {
           contextTokenRef.current = event.token;
         } else if (event.type === "error") {
+          // A paused demo explains itself in the answer surface; a second alert would only repeat it.
+          if (event.code === "PROVIDER_LIMIT" && !event.retryable) continue;
           setNotice({ message: event.message, retryable: event.retryable, code: event.code, partial: receivedSurface });
         } else if (event.type === "done") {
           receivedDone = true;
@@ -306,7 +308,12 @@ export default function App() {
             ) : null}
 
             {notice ? (
-              <aside className="lab-notice" data-partial={notice.partial ? "true" : "false"} role="alert">
+              <aside
+                className="lab-notice"
+                data-partial={notice.partial ? "true" : "false"}
+                data-kind={notice.code === "PROVIDER_LIMIT" ? "limit" : "error"}
+                role="alert"
+              >
                 <p>{notice.message}</p>
                 <div className="lab-notice__actions">
                   {notice.retryable && activePrompt ? (

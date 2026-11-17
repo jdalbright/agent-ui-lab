@@ -40,6 +40,7 @@ import {
   type GetWeatherBundleArguments,
 } from "./_lib/gemini.js";
 import { providerErrorReason } from "./_lib/provider-error-reason.js";
+import { PROVIDER_LIMIT_MESSAGES, providerLimitKind, providerLimitSpec } from "./_lib/provider-limits.js";
 import { getWeatherBundle, type WeatherBundle, type WeatherLocation } from "./_lib/google-weather.js";
 import type { ServerRequest, ServerResponse } from "./_lib/http-types.js";
 import { logEvent } from "./_lib/logger.js";
@@ -742,7 +743,14 @@ export default async function handler(request: ServerRequest, response: ServerRe
     const timedOut = controller.signal.aborted;
     const locationError = error instanceof LocationResolutionError;
     const providerError = error instanceof GeminiProviderError;
-    const code = timedOut ? "TIMEOUT" : locationError ? "LOCATION_AMBIGUOUS" : "PROVIDER_ERROR";
+    const limitKind = timedOut ? undefined : providerLimitKind(error);
+    const code = timedOut
+      ? "TIMEOUT"
+      : locationError
+        ? "LOCATION_AMBIGUOUS"
+        : limitKind
+          ? "PROVIDER_LIMIT"
+          : "PROVIDER_ERROR";
     writeEvent(response, {
       type: "error",
       code,
@@ -750,22 +758,25 @@ export default async function handler(request: ServerRequest, response: ServerRe
         ? "The request reached its time limit. Try again."
         : locationError
           ? error.message
-          : "A provider could not complete the request. A safe fallback is shown.",
-      retryable: !locationError,
+          : limitKind
+            ? PROVIDER_LIMIT_MESSAGES[limitKind]
+            : "A provider could not complete the request. A safe fallback is shown.",
+      retryable: !locationError && limitKind !== "paused",
     });
     logEvent({
       requestId: agentRequest.requestId,
       stage: "complete",
       durationMs: Date.now() - startedAt,
-      errorCode: providerError ? "PROVIDER_ERROR" : code,
-      errorReason: timedOut ? "deadline" : providerErrorReason(error),
+      errorCode: limitKind ? "PROVIDER_LIMIT" : providerError ? "PROVIDER_ERROR" : code,
+      errorReason: timedOut ? "deadline" : limitKind ? `limit:${limitKind}` : providerErrorReason(error),
     });
 
     if (!timedOut) {
       try {
+        const fallbackSpec = limitKind ? providerLimitSpec(limitKind) : narrativeDemoSpec;
         const fallbackMessages = compileSurfaceSpec({
           surfaceId: `answer-${agentRequest.requestId}`,
-          spec: narrativeDemoSpec,
+          spec: fallbackSpec,
           sources: [],
         });
         for (const message of fallbackMessages) writeEvent(response, { type: "a2ui", message });
@@ -775,7 +786,7 @@ export default async function handler(request: ServerRequest, response: ServerRe
           completedAt: nowIso(),
           durationMs: Date.now() - startedAt,
           mode: "safe-fallback",
-          componentCount: narrativeDemoSpec.components.length,
+          componentCount: fallbackSpec.components.length,
           sourceCount: 0,
         });
       } catch {

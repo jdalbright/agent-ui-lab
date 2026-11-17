@@ -613,6 +613,7 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
       "LOCATION_AMBIGUOUS",
       "LOCATION_DENIED",
       "PROVIDER_ERROR",
+      "PROVIDER_LIMIT",
       "TIMEOUT",
       "STREAM_INTERRUPTED",
       "SAFE_FALLBACK",
