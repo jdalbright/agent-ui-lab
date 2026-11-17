@@ -3157,7 +3157,9 @@ export async function composeGenerativeSurfacePlan({
     };
   } catch (error) {
     const v3Failure = firstFailure
-      ? ` Grammar v3 first failed with ${firstFailure.category}: ${(firstFailure.codes ?? []).join(" ") || "none"}.`
+      ? ` Grammar v3 first failed with ${firstFailure.category}: ${(firstFailure.codes ?? []).join(" ") || "none"} at ${
+          schemaIssues.slice(0, 2).map((issue) => `${issue.path} ${issue.code}`).join(" ") || "no schema path"
+        }.`
       : "";
     throw new CompositionValidationError([
       `The deterministic plan-v2 fallback could not be compiled safely.${v3Failure}`,
