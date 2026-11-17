@@ -254,7 +254,7 @@ export default function App() {
           <>
             <EmptyState onSelectSuggestion={handleSuggestion} composer={promptComposer} />
             <footer className="lab-empty-footer">
-              Built with Gemini 3.6 Flash <span aria-hidden="true">·</span> A2UI v0.9.1
+              Built with Gemini 4 Hydrogen <span aria-hidden="true">·</span> A2UI v0.9.1
             </footer>
           </>
         ) : (

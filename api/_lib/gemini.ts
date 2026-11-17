@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { GoogleGenAI, type Interactions } from "@google/genai";
 import { z } from "zod";
-import { LIMITS, MODEL_ID } from "../../shared/constants.js";
+import { LIMITS, MODEL_ID, THINKING_LEVEL } from "../../shared/constants.js";
 import { canonicalizeSafeExternalHttpsUrl } from "../../shared/safe-url.js";
 import {
   SourceRecordSchema,
@@ -352,6 +352,7 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Gemin
         const interaction = await sdk.interactions.create({
           model: MODEL_ID,
           store: false,
+          generation_config: { thinking_level: THINKING_LEVEL },
           input: [
             {
               type: "user_input",
@@ -641,6 +642,7 @@ export async function runGeminiRetrieval({
     const interaction = await gemini.interactions.create({
       model: MODEL_ID,
       store: false,
+      generation_config: { thinking_level: THINKING_LEVEL },
       input: history,
       tools: RETRIEVAL_TOOLS,
       system_instruction: RETRIEVAL_INSTRUCTION,
