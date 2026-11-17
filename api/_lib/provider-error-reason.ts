@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { CompositionValidationError } from "./composition.js";
 import { GeminiProviderError, GeminiToolRoundLimitError } from "./gemini.js";
 
 const MAX_REASON_LENGTH = 72;
@@ -29,13 +30,44 @@ export function providerErrorReason(error: unknown): string {
     return "gemini_provider_other";
   }
 
+  if (error instanceof CompositionValidationError) {
+    return bounded(`composition:${issueSlug(error.issues[0])}`);
+  }
+
   if (error instanceof Error) {
+    const frame = firstAppFrame(error.stack);
+    if (frame && !(typeof (error as { status?: unknown }).status === "number")) {
+      return bounded(`${safeLabel(error.name)}@${frame}`);
+    }
     const httpStatus = (error as { status?: unknown }).status;
     const suffix = typeof httpStatus === "number" ? `:${httpStatus}` : "";
     return bounded(`${safeLabel(error.name)}${suffix}`);
   }
 
   return "unknown";
+}
+
+/** Turns a validator issue into a short slug: lowercase words only, no quoted values or numbers. */
+function issueSlug(issue: string | undefined): string {
+  if (!issue) return "unknown";
+  const words = issue
+    .replace(/(["'`]).*?\1/g, " ")
+    .toLowerCase()
+    .replace(/[^a-z\s-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 8);
+  return words.join("_") || "unknown";
+}
+
+/** Returns the first stack frame inside the app's api/ or shared/ code as file:line. */
+function firstAppFrame(stack: string | undefined): string | undefined {
+  if (!stack) return undefined;
+  for (const line of stack.split("\n").slice(1, 12)) {
+    const match = /(?:api|shared)\/(?:[\w-]+\/)*([\w.-]+\.[cm]?[jt]s):(\d+)/.exec(line);
+    if (match) return `${match[1]}:${match[2]}`;
+  }
+  return undefined;
 }
 
 function zodPaths(cause: unknown): string {
