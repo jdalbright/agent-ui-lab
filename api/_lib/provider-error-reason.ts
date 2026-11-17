@@ -3,7 +3,7 @@ import { CompositionValidationError } from "./composition.js";
 import { GeminiProviderError, GeminiToolRoundLimitError } from "./gemini.js";
 import { WeatherProjectionError } from "./weather-composition-manifest.js";
 
-const MAX_REASON_LENGTH = 160;
+const MAX_REASON_LENGTH = 240;
 
 /**
  * Maps a pipeline failure to a short, content-free reason for operational logs.
@@ -63,7 +63,7 @@ function issueSlug(issue: string | undefined): string {
     .replace(/[^a-z\s-]/g, " ")
     .split(/\s+/)
     .filter(Boolean)
-    .slice(0, 12);
+    .slice(0, 24);
   return words.join("_") || "unknown";
 }
 

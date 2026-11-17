@@ -79,7 +79,7 @@ function normalized(event: LogEvent): LogEvent {
     ...(event.componentCount === undefined ? {} : { componentCount: Math.max(0, event.componentCount) }),
     ...(event.sourceCount === undefined ? {} : { sourceCount: Math.max(0, event.sourceCount) }),
     ...(event.errorCode ? { errorCode: event.errorCode.slice(0, 80) } : {}),
-    ...(event.errorReason ? { errorReason: event.errorReason.replace(/[^A-Za-z0-9_.,:/<>@-]/g, "").slice(0, 160) } : {}),
+    ...(event.errorReason ? { errorReason: event.errorReason.replace(/[^A-Za-z0-9_.,:/<>@-]/g, "").slice(0, 240) } : {}),
     ...(event.recipeId && RECIPE_IDS.has(event.recipeId) ? { recipeId: event.recipeId } : {}),
     ...(event.density && DENSITIES.has(event.density) ? { density: event.density } : {}),
     ...(event.emphasis && EMPHASES.has(event.emphasis) ? { emphasis: event.emphasis } : {}),

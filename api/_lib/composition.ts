@@ -3156,8 +3156,11 @@ export async function composeGenerativeSurfacePlan({
       },
     };
   } catch (error) {
+    const v3Failure = firstFailure
+      ? ` Grammar v3 first failed with ${firstFailure.category}: ${(firstFailure.codes ?? []).join(" ") || "none"}.`
+      : "";
     throw new CompositionValidationError([
-      "The deterministic plan-v2 fallback could not be compiled safely.",
+      `The deterministic plan-v2 fallback could not be compiled safely.${v3Failure}`,
     ], { cause: error });
   }
 }
