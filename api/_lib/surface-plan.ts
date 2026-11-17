@@ -2010,7 +2010,7 @@ function normalizeLocationLabel(value: string): string {
     .trim();
 }
 
-function requestedPromptLocations(prompt: string | undefined): string[] {
+export function requestedPromptLocations(prompt: string | undefined): string[] {
   if (!prompt) return [];
   const candidates: string[] = [];
   const addList = (value: string | undefined): void => {
@@ -2026,7 +2026,7 @@ function requestedPromptLocations(prompt: string | undefined): string[] {
     prompt,
   )?.[1];
   const directWeatherLocation = directWeatherLocationCandidate &&
-      !/^(?:(?:the\s+)?next|this|today|tomorrow|current|active|severe|any|celsius|fahrenheit|metric|imperial|\d|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(
+      !/^(?:(?:the\s+)?next|this|today|tomorrow|current|active|severe|any|a|an|my|our|your|celsius|fahrenheit|metric|imperial|\d|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(
         directWeatherLocationCandidate.trim(),
       ) &&
       !/\b(?:hours?|days?|alerts?|warnings?|advisories)\b/i.test(directWeatherLocationCandidate)

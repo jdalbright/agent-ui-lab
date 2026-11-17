@@ -54,7 +54,7 @@ import {
 import { readRuntimeConfig } from "./_lib/runtime-config.js";
 import { selectSurfaceComposer } from "./_lib/surface-composer-routing.js";
 import { createTrace } from "./_lib/trace.js";
-import { parseWeatherRequestIntent } from "./_lib/weather-request-intent.js";
+import { parseWeatherRequestIntent, weekdayDayOffset } from "./_lib/weather-request-intent.js";
 
 type PipelineMode = "live" | "recorded-fixture" | "safe-fallback";
 
@@ -255,10 +255,18 @@ export async function executeWeather(
       ? undefined
       : validatedInteger(args.targetDayOffset, 0, 0, 9, "targetDayOffset");
   const requestIntent = parseWeatherRequestIntent(request.prompt);
+  // An activity on one named weekday ("my Saturday bike ride") targets that day
+  // even when the model omits targetDayOffset, so the scored window matches.
+  const namedWeekdayOffset =
+    requestIntent.activity &&
+    requestIntent.relativeDayOffsets.length === 0 &&
+    requestIntent.namedWeekdays.length === 1
+      ? weekdayDayOffset(requestIntent.namedWeekdays[0], request.client.timeZone)
+      : undefined;
   const promptTargetDayOffset =
     requestIntent.activity && requestIntent.relativeDayOffsets.length === 1
       ? requestIntent.relativeDayOffsets[0]
-      : undefined;
+      : namedWeekdayOffset;
   const targetDayOffset = promptTargetDayOffset ?? modelTargetDayOffset;
   if (args.targetLocalTime && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(args.targetLocalTime)) {
     throw new RangeError("targetLocalTime must use 24-hour HH:MM format.");

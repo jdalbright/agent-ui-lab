@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseWeatherRequestIntent } from "./weather-request-intent.js";
+import { parseWeatherRequestIntent, weekdayDayOffset } from "./weather-request-intent.js";
 
 describe("parseWeatherRequestIntent", () => {
   it.each(["this week", "next week"])(
@@ -60,5 +60,32 @@ describe("parseWeatherRequestIntent", () => {
       name: "run",
       durationHours: 2,
     });
+  });
+});
+
+describe("weekdayDayOffset", () => {
+  // Tuesday, November 17, 2026 at 3 PM in New York.
+  const tuesday = new Date("2026-11-17T20:00:00Z");
+
+  it("counts forward to the next named weekday", () => {
+    expect(weekdayDayOffset("saturday", "America/New_York", tuesday)).toBe(4);
+    expect(weekdayDayOffset("monday", "America/New_York", tuesday)).toBe(6);
+  });
+
+  it("returns zero for today and respects the time zone's date", () => {
+    expect(weekdayDayOffset("tuesday", "America/New_York", tuesday)).toBe(0);
+    expect(weekdayDayOffset("wednesday", "Asia/Tokyo", tuesday)).toBe(0);
+  });
+
+  it("returns undefined for an invalid time zone", () => {
+    expect(weekdayDayOffset("saturday", "Not/AZone", tuesday)).toBeUndefined();
+  });
+
+  it("recognizes a single weekday and an activity in a planning prompt", () => {
+    const intent = parseWeatherRequestIntent(
+      "Plan my Saturday in Raleigh: when is the best 3-hour window for a bike ride, and what should I bring?",
+    );
+    expect(intent.namedWeekdays).toEqual(["saturday"]);
+    expect(intent.activity).toBeDefined();
   });
 });

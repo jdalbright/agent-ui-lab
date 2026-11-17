@@ -255,3 +255,26 @@ export function parseWeatherRequestIntent(prompt: string): WeatherRequestIntent 
     comparisonMetrics: requestedComparisonMetrics(normalized),
   };
 }
+
+/**
+ * Days from "today" in `timeZone` until the next occurrence of `weekday`
+ * (0 when today is that weekday). Returns undefined for an invalid time zone.
+ */
+export function weekdayDayOffset(
+  weekday: WeatherWeekday,
+  timeZone: string,
+  now: Date = new Date(),
+): number | undefined {
+  let todayName: string;
+  try {
+    todayName = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone })
+      .format(now)
+      .toLocaleLowerCase("en-US");
+  } catch {
+    return undefined;
+  }
+  const today = WEATHER_WEEKDAYS.indexOf(todayName as WeatherWeekday);
+  const target = WEATHER_WEEKDAYS.indexOf(weekday);
+  if (today < 0 || target < 0) return undefined;
+  return (target - today + 7) % 7;
+}
