@@ -239,9 +239,13 @@ test.describe("grammar-v3 extended toolkit", () => {
     const ranking = page.getByRole("button", { name: "Recommendation by host" });
     await expect(scorecard).toHaveAttribute("aria-expanded", "true", { timeout: 10_000 });
     await expect(page.getByRole("table").first()).toBeVisible();
+    await expect(page.getByText("Choose by host framework")).toBeHidden();
     await ranking.click();
     await expect(ranking).toHaveAttribute("aria-expanded", "true");
     await expect(page.getByText("Choose by host framework")).toBeVisible();
+    await scorecard.click();
+    await expect(scorecard).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator(".a2ui-accordion__panel").first()).toBeHidden();
   });
 });
 

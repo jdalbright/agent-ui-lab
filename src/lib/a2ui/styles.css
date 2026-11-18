@@ -2078,6 +2078,11 @@
   padding-block: 0.25rem 1rem;
 }
 
+/* Author display rules beat the UA [hidden] style; keep closed panels hidden. */
+.a2ui-accordion__panel[hidden] {
+  display: none;
+}
+
 /* Scroller */
 .a2ui-scroller {
   display: grid;
