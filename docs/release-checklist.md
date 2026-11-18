@@ -27,9 +27,9 @@ Use this checklist for the first public release and subsequent production change
 - [ ] Every research evidence item references a source ID supplied by the server.
 - [ ] All 18 recorded plan/evidence pairs validate, compile with the production SurfacePlan compiler, pass SurfaceSpec validation, and pass the deterministic quality linter.
 - [ ] The quality linter confirms answer-first hierarchy, sources-last ordering, requested coverage, chart/table alignment, source closure, and bounded density.
-- [ ] The 36 recipe/viewport and 15 grammar-v3/viewport screenshots match their checked-in references with no serious/critical axe findings or document overflow.
+- [ ] The 36 recipe/viewport, 15 grammar-v3/viewport, and 10 extended-toolkit/viewport screenshots match their checked-in references with no serious/critical axe findings or document overflow.
 
-`npm run eval:ui` runs the compiler-backed semantic fixtures, production build, and 51 Chromium screenshot cases. The default test suite and CI must use recorded Gemini Search, Geocoding, and Weather fixtures. CI must not receive provider secrets or run either live UI evaluation command. Run those opt-in commands separately: each uses live Gemini composition for 54 samples but keeps Search, Geocoding, and Weather evidence recorded.
+`npm run eval:ui` runs the compiler-backed semantic fixtures, production build, and 61 Chromium screenshot cases. Reference screenshots are rendered by CI's Ubuntu Chromium: push a branch commit whose message contains `[update-screenshots]` to regenerate them on a `screenshot-baselines/<branch>` review branch, then review and commit them. The default test suite and CI must use recorded Gemini Search, Geocoding, and Weather fixtures. CI must not receive provider secrets or run either live UI evaluation command. Run those opt-in commands separately: each uses live Gemini composition for 54 samples but keeps Search, Geocoding, and Weather evidence recorded.
 
 ## Surface Quality preview acceptance
 

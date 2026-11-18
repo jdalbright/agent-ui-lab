@@ -66,7 +66,7 @@ Weather surfaces and weather-backed comparisons accept only `callout` and `badge
 - Shape rules live in `shared/chart-shape.ts` and are enforced by both the plan validator and the render contract.
 - Every variant keeps the visible data table.
 
-`npm run eval:ui:semantic` includes two recorded extended compositions, QR02 and QC04. `eval:ui:browser` checks them for overflow, serious axe violations, and accordion interaction at all five grammar widths. Reference screenshots for these compositions are not committed yet.
+`npm run eval:ui:semantic` includes two recorded extended compositions, QR02 and QC04. `eval:ui:browser` checks them for overflow, serious axe violations, accordion interaction, and reference screenshots at all five grammar widths.
 
 ## Validation and compilation
 

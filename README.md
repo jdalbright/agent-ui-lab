@@ -68,7 +68,7 @@ npm run dev:full
 | `npm run test:coverage` | Run tests with V8 coverage reports. |
 | `npm run test:e2e` | Run Playwright against desktop and mobile projects. |
 | `npm run eval` | Run the 40-prompt contract evaluation set. |
-| `npm run eval:ui` | Validate recorded plan-v2 and grammar-v3 cases, build the app, then compare 51 Chromium reference screenshots with axe and overflow checks. |
+| `npm run eval:ui` | Validate recorded plan-v2 and grammar-v3 cases, build the app, then compare 61 Chromium reference screenshots with axe and overflow checks. |
 | `npm run eval:ui:live` | Opt in to three live Gemini composition samples per recorded-evidence case (54 total); a Gemini key is required to run the samples. |
 | `npm run eval:ui:live:v3` | Run the separate 54-sample grammar-v3 shadow gate against recorded evidence; no output is rendered to users. |
 

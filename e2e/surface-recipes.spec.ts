@@ -205,9 +205,8 @@ test.describe("grammar-v3 responsive benchmark", () => {
   }
 });
 
-// The extended toolkit is gated by overflow, accessibility, and interaction
-// checks. Reference screenshots are intentionally not committed yet; generate
-// them with the pinned Playwright Chromium before adding toHaveScreenshot here.
+// The extended toolkit is gated by overflow, accessibility, interaction, and
+// reference screenshots generated on CI's Chromium (update-screenshots.yml).
 test.describe("grammar-v3 extended toolkit", () => {
   test.skip(({ isMobile }) => isMobile, "The explicit viewport matrix runs in Desktop Chrome.");
 
@@ -228,6 +227,16 @@ test.describe("grammar-v3 extended toolkit", () => {
           dimensions.clientWidth,
         );
         await expectNoSeriousViolations(page);
+
+        await page.addStyleTag({
+          content:
+            ".agent-shell-header, .lab-answer__composer { position: static !important; inset: auto !important; }",
+        });
+        await page.evaluate(() => document.fonts.ready);
+        await expect(page.locator(".lab-answer")).toHaveScreenshot(
+          `grammar-v3-extended-${caseId.toLocaleLowerCase("en-US")}-${viewport.width}.png`,
+          { animations: "disabled" },
+        );
       });
     }
   }
