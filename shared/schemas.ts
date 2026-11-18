@@ -1,5 +1,25 @@
 import { z } from "zod";
 import { A2UI_VERSION, CATALOG_IDS, LIMITS, TRUSTED_COMPONENT_NAMES } from "./constants.js";
+import {
+  BADGE_TONES,
+  CALLOUT_TONES,
+  CARD_VARIANTS,
+  CHART_VARIANTS,
+  COLUMN_SPANS,
+  DIVIDER_STYLES,
+  GRID_COLUMNS,
+  LAYOUT_GAPS,
+  RANK_ORDERS,
+  SECTION_ROLES,
+  SECTION_WIDTHS,
+  SPLIT_RATIOS,
+  STACK_ALIGNMENTS,
+  SURFACE_ICONS,
+  SURFACE_PROMINENCE,
+  SURFACE_TONES,
+  TREND_DIRECTIONS,
+} from "./layout-tokens.js";
+import { chartShapeIssues } from "./chart-shape.js";
 import { isSafeExternalHttpsUrl } from "./safe-url.js";
 
 const boundedText = (max: number) => z.string().trim().min(1).max(max);
@@ -145,7 +165,7 @@ export const SplitNodeSchema = z
     ...nodeBase,
     component: z.literal("Split"),
     children: z.array(idSchema).min(2).max(3),
-    ratio: z.enum(["equal", "wide-start", "wide-end"]).default("equal"),
+    ratio: z.enum(SPLIT_RATIOS).default("equal"),
   })
   .strict();
 
@@ -163,6 +183,7 @@ export const DividerNodeSchema = z
     ...nodeBase,
     component: z.literal("Divider"),
     label: z.string().trim().max(80).optional(),
+    style: z.enum(DIVIDER_STYLES).optional(),
   })
   .strict();
 
@@ -171,8 +192,8 @@ export const StackNodeSchema = z
     ...nodeBase,
     component: z.literal("Stack"),
     children,
-    gap: z.enum(["compact", "regular", "generous"]),
-    align: z.enum(["start", "center", "stretch"]),
+    gap: z.enum(LAYOUT_GAPS),
+    align: z.enum(STACK_ALIGNMENTS),
   })
   .strict();
 
@@ -181,8 +202,8 @@ export const GridNodeSchema = z
     ...nodeBase,
     component: z.literal("Grid"),
     children,
-    columns: z.enum(["adaptive", "two", "three"]),
-    gap: z.enum(["compact", "regular", "generous"]),
+    columns: z.enum(GRID_COLUMNS),
+    gap: z.enum(LAYOUT_GAPS),
   })
   .strict();
 
@@ -192,9 +213,11 @@ export const SectionNodeSchema = z
     component: z.literal("Section"),
     children,
     label: z.string().trim().max(80).optional(),
-    role: z.enum(["primary", "supporting", "reference"]),
-    tone: z.enum(["neutral", "accent", "caution"]),
-    prominence: z.enum(["lead", "standard", "quiet"]),
+    role: z.enum(SECTION_ROLES),
+    tone: z.enum(SURFACE_TONES),
+    prominence: z.enum(SURFACE_PROMINENCE),
+    width: z.enum(SECTION_WIDTHS).optional(),
+    icon: z.enum(SURFACE_ICONS).optional(),
   })
   .strict();
 
@@ -203,8 +226,11 @@ export const CardNodeSchema = z
     ...nodeBase,
     component: z.literal("Card"),
     children: z.array(idSchema).min(1).max(8),
-    tone: z.enum(["neutral", "accent", "caution"]),
-    prominence: z.enum(["lead", "standard", "quiet"]),
+    tone: z.enum(SURFACE_TONES),
+    prominence: z.enum(SURFACE_PROMINENCE),
+    variant: z.enum(CARD_VARIANTS).optional(),
+    icon: z.enum(SURFACE_ICONS).optional(),
+    label: z.string().trim().max(80).optional(),
   })
   .strict();
 
@@ -225,6 +251,45 @@ export const DisclosureNodeSchema = z
     children: z.array(idSchema).min(1).max(4),
     label: boundedText(80),
     defaultOpen: z.boolean(),
+  })
+  .strict();
+
+export const AccordionNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Accordion"),
+    children: z.array(idSchema).min(2).max(5),
+    labels: z.array(boundedText(60)).min(2).max(5),
+    defaultOpenIndex: z.number().int().min(0).max(4).optional(),
+  })
+  .strict();
+
+export const ScrollerNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Scroller"),
+    children: z.array(idSchema).min(2).max(8),
+    label: boundedText(80),
+  })
+  .strict();
+
+export const ColumnsNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Columns"),
+    children: z.array(idSchema).min(2).max(6),
+    spans: z.array(z.enum(COLUMN_SPANS)).min(2).max(6),
+    gap: z.enum(LAYOUT_GAPS),
+  })
+  .strict();
+
+export const AsideNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Aside"),
+    children: z.array(idSchema).length(2),
+    side: z.enum(["start", "end"]),
+    label: z.string().trim().max(80).optional(),
   })
   .strict();
 
@@ -362,7 +427,7 @@ export const ComparisonChartNodeSchema = z
     labels: z.array(boundedText(60)).min(2).max(24),
     series: z.array(chartSeriesSchema).min(1).max(4),
     unit: z.string().trim().max(24).optional(),
-    variant: z.enum(["line", "bar"]).optional(),
+    variant: z.enum(CHART_VARIANTS).optional(),
   })
   .strict();
 
@@ -423,6 +488,126 @@ export const SourceListNodeSchema = z
   })
   .strict();
 
+const citedSourceIds = z.array(sourceIdSchema).min(1).max(LIMITS.sources);
+
+const keyFactSchema = z
+  .object({
+    label: boundedText(60),
+    value: boundedText(40),
+    detail: z.string().trim().max(160).optional(),
+    trend: z.enum(TREND_DIRECTIONS).optional(),
+    sparkline: z.array(z.number().finite()).min(3).max(12).optional(),
+  })
+  .strict();
+
+export const KeyFactsNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("KeyFacts"),
+    label: z.string().trim().max(80).optional(),
+    facts: z.array(keyFactSchema).min(2).max(6),
+    sourceIds: citedSourceIds,
+  })
+  .strict();
+
+export const CalloutNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("Callout"),
+    tone: z.enum(CALLOUT_TONES),
+    icon: z.enum(SURFACE_ICONS).optional(),
+    title: boundedText(120),
+    body: boundedText(500),
+    sourceIds: citedSourceIds,
+  })
+  .strict();
+
+const citedPointSchema = z
+  .object({
+    text: boundedText(240),
+    sourceId: sourceIdSchema,
+  })
+  .strict();
+
+export const ProsConsNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("ProsCons"),
+    subject: boundedText(120),
+    pros: z.array(citedPointSchema).min(1).max(5),
+    cons: z.array(citedPointSchema).min(1).max(5),
+  })
+  .strict();
+
+const rankedItemSchema = z
+  .object({
+    title: boundedText(120),
+    detail: boundedText(320),
+    score: z.string().trim().max(24).optional(),
+    sourceId: sourceIdSchema,
+  })
+  .strict();
+
+export const RankedListNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("RankedList"),
+    label: boundedText(80),
+    order: z.enum(RANK_ORDERS),
+    items: z.array(rankedItemSchema).min(2).max(8),
+  })
+  .strict();
+
+const meterSchema = z
+  .object({
+    label: boundedText(60),
+    value: z.number().finite(),
+    min: z.number().finite(),
+    max: z.number().finite(),
+    unit: z.string().trim().max(16).optional(),
+  })
+  .strict()
+  .refine((meter) => meter.min < meter.max && meter.value >= meter.min && meter.value <= meter.max, {
+    message: "Meter values must fall within an increasing min/max range.",
+  });
+
+export const ScoreMeterNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("ScoreMeter"),
+    label: z.string().trim().max(80).optional(),
+    meters: z.array(meterSchema).min(1).max(4),
+    sourceIds: citedSourceIds,
+  })
+  .strict();
+
+export const PullQuoteNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("PullQuote"),
+    text: boundedText(280),
+    attribution: boundedText(120),
+    sourceId: sourceIdSchema,
+  })
+  .strict();
+
+const badgeSchema = z
+  .object({
+    label: boundedText(24),
+    tone: z.enum(BADGE_TONES),
+  })
+  .strict();
+
+export const BadgeRowNodeSchema = z
+  .object({
+    ...nodeBase,
+    component: z.literal("BadgeRow"),
+    label: z.string().trim().max(80).optional(),
+    badges: z.array(badgeSchema).min(1).max(8),
+    sourceIds: citedSourceIds,
+  })
+  .strict();
+
 export const SurfaceNodeSchema = z.discriminatedUnion("component", [
   SurfaceFrameNodeSchema,
   EditorialHeadingNodeSchema,
@@ -451,6 +636,17 @@ export const SurfaceNodeSchema = z.discriminatedUnion("component", [
   EvidenceListNodeSchema,
   TimelineNodeSchema,
   SourceListNodeSchema,
+  AccordionNodeSchema,
+  ScrollerNodeSchema,
+  ColumnsNodeSchema,
+  AsideNodeSchema,
+  KeyFactsNodeSchema,
+  CalloutNodeSchema,
+  ProsConsNodeSchema,
+  RankedListNodeSchema,
+  ScoreMeterNodeSchema,
+  PullQuoteNodeSchema,
+  BadgeRowNodeSchema,
 ]);
 
 export const SurfaceSpecSchema = z
@@ -481,6 +677,41 @@ export const SurfaceSpecSchema = z
             path: ["components", componentIndex, "series", seriesIndex, "values"],
             message: "Comparison chart series values must match the label count.",
           });
+        });
+        for (const message of chartShapeIssues(component)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["components", componentIndex, "series"],
+            message,
+          });
+        }
+      }
+
+      if (component.component === "Accordion") {
+        if (component.labels.length !== component.children.length) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["components", componentIndex, "labels"],
+            message: "Accordion labels must match the panel child count.",
+          });
+        }
+        if (
+          component.defaultOpenIndex !== undefined &&
+          component.defaultOpenIndex >= component.children.length
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["components", componentIndex, "defaultOpenIndex"],
+            message: "The default accordion panel must reference an available child.",
+          });
+        }
+      }
+
+      if (component.component === "Columns" && component.spans.length !== component.children.length) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["components", componentIndex, "spans"],
+          message: "Column spans must match the column child count.",
         });
       }
 

@@ -104,6 +104,40 @@ function chartPoints(values: readonly number[], minimum: number, maximum: number
     .join(" ");
 }
 
+const CHART_DESCRIPTIONS = {
+  line: "Line chart.",
+  bar: "Bar chart with a labeled zero baseline.",
+  area: "Area chart filled to a labeled zero baseline.",
+  "stacked-bar": "Stacked bar chart; each column totals its series values.",
+  donut: "Donut chart showing each label's share of the total.",
+  range: "Range chart shading the band between the low and high series.",
+} as const;
+
+function DonutSlices({ labels, values }: { labels: readonly string[]; values: readonly number[] }) {
+  const total = values.reduce((sum, value) => sum + Math.max(0, value), 0) || 1;
+  const centerX = chartWidth / 2;
+  const centerY = chartHeight / 2;
+  const radius = chartHeight / 2 - 18;
+  const circumference = 2 * Math.PI * radius;
+  const lengths = values.map((value) => (Math.max(0, value) / total) * circumference);
+  const offsets = lengths.map((_, index) => lengths.slice(0, index).reduce((sum, length) => sum + length, 0));
+  return (
+    <g transform={`rotate(-90 ${centerX} ${centerY})`}>
+      {lengths.map((length, index) => (
+        <circle
+          className={`a2ui-chart__slice a2ui-chart__slice--${index % 8}`}
+          cx={centerX}
+          cy={centerY}
+          r={radius}
+          key={labels[index] ?? index}
+          strokeDasharray={`${length.toFixed(2)} ${(circumference - length).toFixed(2)}`}
+          strokeDashoffset={(-offsets[index]).toFixed(2)}
+        />
+      ))}
+    </g>
+  );
+}
+
 export const ComparisonChart = createComponentImplementation(
   {
     name: "ComparisonChart",
@@ -113,11 +147,15 @@ export const ComparisonChart = createComponentImplementation(
     const variant = props.variant ?? "line";
     const labels = props.labels as string[];
     const allValues = props.series.flatMap((series) => series.values);
-    const dataMinimum = Math.min(...allValues);
-    const dataMaximum = Math.max(...allValues);
-    const minimum = variant === "bar" ? Math.min(0, dataMinimum) : dataMinimum;
-    const maximumCandidate = variant === "bar" ? Math.max(0, dataMaximum) : dataMaximum;
-    const maximum = variant === "bar" && maximumCandidate === minimum
+    const stackedTotals = labels.map((_, index) =>
+      props.series.reduce((total, series) => total + (series.values[index] ?? 0), 0),
+    );
+    const zeroAnchored = variant === "bar" || variant === "area" || variant === "stacked-bar";
+    const dataMinimum = variant === "stacked-bar" ? 0 : Math.min(...allValues);
+    const dataMaximum = variant === "stacked-bar" ? Math.max(...stackedTotals) : Math.max(...allValues);
+    const minimum = zeroAnchored ? Math.min(0, dataMinimum) : dataMinimum;
+    const maximumCandidate = zeroAnchored ? Math.max(0, dataMaximum) : dataMaximum;
+    const maximum = zeroAnchored && maximumCandidate === minimum
       ? minimum + 1
       : maximumCandidate;
     const plotWidth = chartWidth - chartInset.left - chartInset.right;
@@ -146,11 +184,13 @@ export const ComparisonChart = createComponentImplementation(
             data-domain-max={maximum}
           >
             <desc>
-              {variant === "bar"
-                ? "Bar chart with a labeled zero baseline."
-                : "Line chart."}{" "}
+              {CHART_DESCRIPTIONS[variant]}{" "}
               The complete values are available in the table immediately below.
             </desc>
+            {variant === "donut" ? (
+              <DonutSlices labels={labels} values={props.series[0]?.values ?? []} />
+            ) : (
+              <>
             {[0, 1, 2, 3, 4].map((line) => {
               const y = chartInset.top + (line / 4) * (chartHeight - chartInset.top - chartInset.bottom);
               return (
@@ -164,7 +204,7 @@ export const ComparisonChart = createComponentImplementation(
                 />
               );
             })}
-            {variant === "bar" ? (
+            {zeroAnchored ? (
               <>
                 <line
                   className="a2ui-chart__baseline"
@@ -190,7 +230,69 @@ export const ComparisonChart = createComponentImplementation(
                 ))}
               </>
             ) : null}
-            {variant === "bar"
+            {variant === "stacked-bar"
+              ? labels.flatMap((_, valueIndex) => {
+                  let running = 0;
+                  return props.series.map((series, seriesIndex) => {
+                    const value = series.values[valueIndex] ?? 0;
+                    const top = yForValue(running + value);
+                    const bottom = yForValue(running);
+                    running += value;
+                    return (
+                      <rect
+                        key={`${series.label}-${valueIndex}`}
+                        className={`a2ui-chart__bar a2ui-chart__bar--${seriesIndex % 4}`}
+                        x={chartInset.left + valueIndex * groupWidth + groupWidth * 0.2}
+                        y={top}
+                        width={groupWidth * 0.6}
+                        height={Math.max(0, bottom - top)}
+                        rx="1"
+                      />
+                    );
+                  });
+                })
+              : variant === "range" && props.series.length === 2
+                ? (
+                    <>
+                      <polygon
+                        className="a2ui-chart__band"
+                        points={`${chartPoints(props.series[1].values, minimum, maximum)} ${chartPoints(
+                          props.series[0].values,
+                          minimum,
+                          maximum,
+                        )
+                          .split(" ")
+                          .reverse()
+                          .join(" ")}`}
+                      />
+                      {props.series.map((series, index) => (
+                        <polyline
+                          key={series.label}
+                          className={`a2ui-chart__series a2ui-chart__series--${index % 4}`}
+                          points={chartPoints(series.values, minimum, maximum)}
+                        />
+                      ))}
+                    </>
+                  )
+              : variant === "area"
+                ? props.series.map((series, index) => {
+                    const line = chartPoints(series.values, minimum, maximum);
+                    const first = line.split(" ")[0]?.split(",")[0] ?? chartInset.left;
+                    const last = line.split(" ").at(-1)?.split(",")[0] ?? chartWidth - chartInset.right;
+                    return (
+                      <g key={series.label}>
+                        <polygon
+                          className={`a2ui-chart__area a2ui-chart__area--${index % 4}`}
+                          points={`${first},${zeroBaselineY} ${line} ${last},${zeroBaselineY}`}
+                        />
+                        <polyline
+                          className={`a2ui-chart__series a2ui-chart__series--${index % 4}`}
+                          points={line}
+                        />
+                      </g>
+                    );
+                  })
+              : variant === "bar"
               ? props.series.flatMap((series, seriesIndex) =>
                   series.values.map((value, valueIndex) => {
                     const valueY = yForValue(value);
@@ -221,15 +323,24 @@ export const ComparisonChart = createComponentImplementation(
                     points={chartPoints(series.values, minimum, maximum)}
                   />
                 ))}
+              </>
+            )}
           </svg>
         </div>
         <ul className="a2ui-chart__legend" aria-label="Chart legend">
-          {props.series.map((series, index) => (
-            <li key={series.label}>
-              <span className={`a2ui-chart__key a2ui-chart__key--${index % 4}`} aria-hidden="true" />
-              {series.label}
-            </li>
-          ))}
+          {variant === "donut"
+            ? labels.map((label, index) => (
+                <li key={label}>
+                  <span className={`a2ui-chart__key a2ui-chart__key--${index % 8}`} aria-hidden="true" />
+                  {label}
+                </li>
+              ))
+            : props.series.map((series, index) => (
+                <li key={series.label}>
+                  <span className={`a2ui-chart__key a2ui-chart__key--${index % 4}`} aria-hidden="true" />
+                  {series.label}
+                </li>
+              ))}
         </ul>
         <div className="a2ui-table-scroll" tabIndex={0} role="region" aria-label={`${props.title} data`}>
           <table className="a2ui-table a2ui-chart__table" aria-label={`${props.title} data`}>

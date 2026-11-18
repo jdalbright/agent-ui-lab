@@ -323,6 +323,53 @@ function canonicalNode(
       };
     case "SourceList":
       return { id, component, label: "Sources", sourceIds: sourceId ? [sourceId] : [] };
+    case "KeyFacts":
+      return {
+        id,
+        component,
+        facts: [
+          { label: "Recorded value A", value: "1" },
+          { label: "Recorded value B", value: "2" },
+        ],
+        sourceIds: sourceId ? [sourceId] : [],
+      };
+    case "Callout":
+      return { id, component, tone: "info", title: "Recorded note", body: text, sourceIds: sourceId ? [sourceId] : [] };
+    case "ProsCons":
+      return {
+        id,
+        component,
+        subject: "Recorded option",
+        pros: [{ text, sourceId: sourceId ?? "src_missing1" }],
+        cons: [{ text: "Recorded limitation", sourceId: sourceId ?? "src_missing1" }],
+      };
+    case "RankedList":
+      return {
+        id,
+        component,
+        label: "Ranking",
+        order: "desc",
+        items: [
+          { title: "Option A", detail: text, sourceId: sourceId ?? "src_missing1" },
+          { title: "Option B", detail: "Recorded detail", sourceId: sourceId ?? "src_missing1" },
+        ],
+      };
+    case "ScoreMeter":
+      return {
+        id,
+        component,
+        meters: [{ label: "Recorded score", value: 5, min: 0, max: 10 }],
+        sourceIds: sourceId ? [sourceId] : [],
+      };
+    case "PullQuote":
+      return { id, component, text, attribution: "Recorded source", sourceId: sourceId ?? "src_missing1" };
+    case "BadgeRow":
+      return {
+        id,
+        component,
+        badges: [{ label: "Recorded", tone: "neutral" }],
+        sourceIds: sourceId ? [sourceId] : [],
+      };
     case "SurfaceFrame":
     case "Band":
     case "Split":
@@ -333,6 +380,10 @@ function canonicalNode(
     case "Card":
     case "Tabs":
     case "Disclosure":
+    case "Accordion":
+    case "Scroller":
+    case "Columns":
+    case "Aside":
       throw new Error(`Layout component ${component} cannot be a canonical leaf.`);
   }
 }

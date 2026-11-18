@@ -2,14 +2,18 @@
 import { useState, type KeyboardEvent } from "react";
 import { createComponentImplementation } from "@a2ui/react/v0_9";
 import {
+  AccordionNodeSchema,
+  AsideNodeSchema,
   BandNodeSchema,
   CardNodeSchema,
+  ColumnsNodeSchema,
   DisclosureNodeSchema,
   DividerNodeSchema,
   EditorialHeadingNodeSchema,
   GridNodeSchema,
   MetricNodeSchema,
   RailNodeSchema,
+  ScrollerNodeSchema,
   SectionNodeSchema,
   SplitNodeSchema,
   StackNodeSchema,
@@ -17,7 +21,7 @@ import {
   TabsNodeSchema,
   TextBlockNodeSchema,
 } from "@shared/schemas";
-import { joinClassNames } from "./common";
+import { joinClassNames, SurfaceIconGlyph } from "./common";
 
 export const SurfaceFrame = createComponentImplementation(
   {
@@ -172,14 +176,25 @@ export const Divider = createComponentImplementation(
     name: "Divider",
     schema: DividerNodeSchema.omit({ id: true, component: true }),
   },
-  ({ props }) =>
-    props.label ? (
-      <div className="a2ui-divider" role="separator" aria-label={props.label}>
+  ({ props }) => {
+    const style = props.style ?? "line";
+    if (style === "space") return <div className="a2ui-divider a2ui-divider--space" role="separator" aria-label={props.label} />;
+    return props.label ? (
+      <div
+        className={joinClassNames("a2ui-divider", style === "ornament" && "a2ui-divider--ornament")}
+        role="separator"
+        aria-label={props.label}
+      >
         <span>{props.label}</span>
+      </div>
+    ) : style === "ornament" ? (
+      <div className="a2ui-divider a2ui-divider--ornament" role="separator">
+        <span aria-hidden="true">✦</span>
       </div>
     ) : (
       <hr className="a2ui-divider a2ui-divider--plain" />
-    ),
+    );
+  },
 );
 
 export const Stack = createComponentImplementation(
@@ -236,10 +251,18 @@ export const Section = createComponentImplementation(
           `a2ui-section--${props.role}`,
           `a2ui-section--tone-${props.tone}`,
           `a2ui-section--prominence-${props.prominence}`,
+          props.width === "narrow" && "a2ui-section--narrow",
         )}
         aria-labelledby={labelId}
       >
-        {props.label ? <h3 className="a2ui-section__label" id={labelId}>{props.label}</h3> : null}
+        {props.label ? (
+          <h3 className="a2ui-section__label" id={labelId}>
+            <SurfaceIconGlyph icon={props.icon} />
+            {props.label}
+          </h3>
+        ) : (
+          <SurfaceIconGlyph icon={props.icon} className="a2ui-section__icon" />
+        )}
         <div className="a2ui-section__content">
           {(props.children as string[]).map((childId) => buildChild(childId))}
         </div>
@@ -253,17 +276,29 @@ export const Card = createComponentImplementation(
     name: "Card",
     schema: CardNodeSchema.omit({ id: true, component: true }),
   },
-  ({ props, buildChild }) => (
-    <div
-      className={joinClassNames(
-        "a2ui-card",
-        `a2ui-card--tone-${props.tone}`,
-        `a2ui-card--prominence-${props.prominence}`,
-      )}
-    >
-      {(props.children as string[]).map((childId) => buildChild(childId))}
-    </div>
-  ),
+  ({ props, buildChild, context }) => {
+    const labelId = props.label ? `${context.componentModel.id}-label` : undefined;
+    const Container = props.label ? "section" : "div";
+    return (
+      <Container
+        className={joinClassNames(
+          "a2ui-card",
+          `a2ui-card--tone-${props.tone}`,
+          `a2ui-card--prominence-${props.prominence}`,
+          `a2ui-card--${props.variant ?? "outlined"}`,
+        )}
+        aria-labelledby={labelId}
+      >
+        {props.label || props.icon ? (
+          <div className="a2ui-card__header">
+            <SurfaceIconGlyph icon={props.icon} className="a2ui-card__icon" />
+            {props.label ? <h3 className="a2ui-card__label" id={labelId}>{props.label}</h3> : null}
+          </div>
+        ) : null}
+        {(props.children as string[]).map((childId) => buildChild(childId))}
+      </Container>
+    );
+  },
 );
 
 export const Tabs = createComponentImplementation(
@@ -342,6 +377,133 @@ export const Disclosure = createComponentImplementation(
   ),
 );
 
+export const Accordion = createComponentImplementation(
+  {
+    name: "Accordion",
+    schema: AccordionNodeSchema.omit({ id: true, component: true }),
+  },
+  ({ props, buildChild, context }) => {
+    const childIds = props.children as string[];
+    const labels = props.labels as string[];
+    const baseId = context.componentModel.id;
+    const [openIndexes, setOpenIndexes] = useState<ReadonlySet<number>>(
+      () => new Set(props.defaultOpenIndex === undefined ? [] : [props.defaultOpenIndex]),
+    );
+    const toggle = (index: number): void => {
+      setOpenIndexes((current) => {
+        const next = new Set(current);
+        if (next.has(index)) next.delete(index);
+        else next.add(index);
+        return next;
+      });
+    };
+    const focusHeader = (index: number): void => {
+      const nextIndex = (index + childIds.length) % childIds.length;
+      globalThis.document?.getElementById(`${baseId}-header-${nextIndex}`)?.focus();
+    };
+    const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
+      if (event.key === "ArrowDown") focusHeader(index + 1);
+      else if (event.key === "ArrowUp") focusHeader(index - 1);
+      else if (event.key === "Home") focusHeader(0);
+      else if (event.key === "End") focusHeader(childIds.length - 1);
+      else return;
+      event.preventDefault();
+    };
+    return (
+      <div className="a2ui-accordion">
+        {childIds.map((childId, index) => {
+          const open = openIndexes.has(index);
+          return (
+            <div className="a2ui-accordion__item" key={childId}>
+              <h3 className="a2ui-accordion__heading">
+                <button
+                  aria-controls={`${baseId}-panel-${index}`}
+                  aria-expanded={open}
+                  className="a2ui-accordion__trigger"
+                  id={`${baseId}-header-${index}`}
+                  onClick={() => toggle(index)}
+                  onKeyDown={(event) => handleKeyDown(event, index)}
+                  type="button"
+                >
+                  <span>{labels[index]}</span>
+                  <span className="a2ui-accordion__chevron" aria-hidden="true" />
+                </button>
+              </h3>
+              <div
+                aria-labelledby={`${baseId}-header-${index}`}
+                className="a2ui-accordion__panel"
+                hidden={!open}
+                id={`${baseId}-panel-${index}`}
+                role="region"
+              >
+                {buildChild(childId)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  },
+);
+
+export const Scroller = createComponentImplementation(
+  {
+    name: "Scroller",
+    schema: ScrollerNodeSchema.omit({ id: true, component: true }),
+  },
+  ({ props, buildChild }) => (
+    <div className="a2ui-scroller" role="region" aria-label={props.label} tabIndex={0}>
+      {(props.children as string[]).map((childId) => (
+        <div className="a2ui-scroller__item" key={childId}>
+          {buildChild(childId)}
+        </div>
+      ))}
+    </div>
+  ),
+);
+
+export const Columns = createComponentImplementation(
+  {
+    name: "Columns",
+    schema: ColumnsNodeSchema.omit({ id: true, component: true }),
+  },
+  ({ props, buildChild }) => {
+    const spans = props.spans as string[];
+    return (
+      <div className={joinClassNames("a2ui-columns", `a2ui-columns--gap-${props.gap}`)}>
+        {(props.children as string[]).map((childId, index) => (
+          <div
+            className={joinClassNames("a2ui-columns__item", `a2ui-columns__item--${spans[index] ?? "full"}`)}
+            key={childId}
+          >
+            {buildChild(childId)}
+          </div>
+        ))}
+      </div>
+    );
+  },
+);
+
+export const Aside = createComponentImplementation(
+  {
+    name: "Aside",
+    schema: AsideNodeSchema.omit({ id: true, component: true }),
+  },
+  ({ props, buildChild, context }) => {
+    const [mainId, asideId] = props.children as string[];
+    const labelId = props.label ? `${context.componentModel.id}-label` : undefined;
+    return (
+      <div className={joinClassNames("a2ui-aside-layout", `a2ui-aside-layout--${props.side}`)}>
+        <div className="a2ui-aside-layout__main">{buildChild(mainId)}</div>
+        <aside className="a2ui-aside-layout__aside" aria-labelledby={labelId} aria-label={labelId ? undefined : "Supporting details"}>
+          {props.label ? <h3 className="a2ui-section__label" id={labelId}>{props.label}</h3> : null}
+          {buildChild(asideId)}
+        </aside>
+      </div>
+    );
+  },
+);
+
 export const layoutComponents = [
   SurfaceFrame,
   EditorialHeading,
@@ -357,4 +519,8 @@ export const layoutComponents = [
   Card,
   Tabs,
   Disclosure,
+  Accordion,
+  Scroller,
+  Columns,
+  Aside,
 ] as const;

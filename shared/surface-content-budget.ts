@@ -46,6 +46,15 @@ const STRUCTURAL_TEXT_KEYS = new Set([
   "variant",
   "conditionKey",
   "stance",
+  // Closed presentation tokens added with the extended toolkit are layout
+  // choices, not prose. (Earlier tokens keep their historical measurement.)
+  "width",
+  "icon",
+  "style",
+  "spans",
+  "side",
+  "order",
+  "trend",
 ]);
 
 const PRIMARY_COMPONENTS = new Set([
