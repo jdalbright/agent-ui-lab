@@ -4,6 +4,16 @@ import {
   SURFACE_CONTENT_BUDGETS,
   evaluateSurfaceContentBudget,
 } from "../../shared/surface-content-budget.js";
+import { chartShapeIssues } from "../../shared/chart-shape.js";
+import {
+  BADGE_TONES,
+  CALLOUT_TONES,
+  CHART_VARIANTS,
+  RANK_ORDERS,
+  SURFACE_ICONS,
+  TREND_DIRECTIONS,
+  WEATHER_CHART_VARIANTS,
+} from "../../shared/layout-tokens.js";
 import { parseStrictFormattedNumber } from "../../shared/strict-numeric.js";
 import {
   SurfaceSpecSchema,
@@ -137,6 +147,128 @@ const weatherMetricsModuleSchema = z
   })
   .strict();
 
+// Extended-toolkit "insight" modules. They are model-authored, bounded, and
+// cited; none of them can be a primary module.
+const calloutModuleSchema = z
+  .object({
+    type: z.literal("callout"),
+    tone: z.enum(CALLOUT_TONES),
+    icon: z.enum(SURFACE_ICONS).optional(),
+    title: safePlanText(120),
+    body: safePlanText(500),
+    sourceIds: sourceIdsSchema,
+  })
+  .strict();
+
+const badgesModuleSchema = z
+  .object({
+    type: z.literal("badges"),
+    label: safeOptionalPlanText(80),
+    badges: z
+      .array(z.object({ label: safePlanText(24), tone: z.enum(BADGE_TONES) }).strict())
+      .min(1)
+      .max(8),
+    sourceIds: sourceIdsSchema,
+  })
+  .strict();
+
+const factsModuleSchema = z
+  .object({
+    type: z.literal("facts"),
+    label: safeOptionalPlanText(80),
+    facts: z
+      .array(
+        z
+          .object({
+            label: safePlanText(60),
+            value: safePlanText(40),
+            detail: safeOptionalPlanText(160),
+            trend: z.enum(TREND_DIRECTIONS).optional(),
+            sparkline: z.array(z.number().finite()).min(3).max(12).optional(),
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(6),
+    sourceIds: sourceIdsSchema,
+  })
+  .strict();
+
+const citedPointSchema = z.object({ text: safePlanText(240), sourceId: sourceIdSchema }).strict();
+
+const prosConsModuleSchema = z
+  .object({
+    type: z.literal("proscons"),
+    subject: safePlanText(120),
+    pros: z.array(citedPointSchema).min(1).max(5),
+    cons: z.array(citedPointSchema).min(1).max(5),
+  })
+  .strict();
+
+const rankedModuleSchema = z
+  .object({
+    type: z.literal("ranked"),
+    label: safePlanText(80),
+    order: z.enum(RANK_ORDERS),
+    items: z
+      .array(
+        z
+          .object({
+            title: safePlanText(120),
+            detail: safePlanText(320),
+            score: safeOptionalPlanText(24),
+            sourceId: sourceIdSchema,
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(8),
+  })
+  .strict();
+
+const meterModuleSchema = z
+  .object({
+    type: z.literal("meter"),
+    label: safeOptionalPlanText(80),
+    meters: z
+      .array(
+        z
+          .object({
+            label: safePlanText(60),
+            value: z.number().finite(),
+            min: z.number().finite(),
+            max: z.number().finite(),
+            unit: safeOptionalPlanText(16),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(4),
+    sourceIds: sourceIdsSchema,
+  })
+  .strict();
+
+const quoteModuleSchema = z
+  .object({
+    type: z.literal("quote"),
+    text: safePlanText(280),
+    attribution: safePlanText(120),
+    sourceId: sourceIdSchema,
+  })
+  .strict();
+
+export const INSIGHT_MODULE_TYPES = [
+  "callout",
+  "badges",
+  "facts",
+  "proscons",
+  "ranked",
+  "meter",
+  "quote",
+] as const;
+/** Insight modules that carry only text; safe on weather-backed surfaces. */
+const TEXT_ONLY_INSIGHT_TYPES = new Set<string>(["callout", "badges"]);
+
 const weatherModuleSchema = z.union([
   weatherHeroModuleSchema,
   weatherRecommendationModuleSchema,
@@ -144,6 +276,8 @@ const weatherModuleSchema = z.union([
   weatherDailyModuleSchema,
   weatherAlertsModuleSchema,
   weatherMetricsModuleSchema,
+  calloutModuleSchema,
+  badgesModuleSchema,
   sourceModuleSchema,
 ]);
 
@@ -224,7 +358,7 @@ const weatherComparisonTableModuleSchema = z
 const authoredComparisonChartModuleSchema = z
   .object({
     type: z.literal("chart"),
-    variant: z.enum(["line", "bar"]),
+    variant: z.enum(CHART_VARIANTS),
     title: safePlanText(160),
     labels: z.array(safePlanText(60)).min(2).max(12),
     series: z
@@ -246,7 +380,7 @@ const authoredComparisonChartModuleSchema = z
 const weatherComparisonChartModuleSchema = z
   .object({
     type: z.literal("chart"),
-    variant: z.enum(["line", "bar"]),
+    variant: z.enum(WEATHER_CHART_VARIANTS),
     title: safePlanText(160),
     locationIndexes: locationIndexesSchema,
     forecastKind: z.enum(["hourly", "daily"]),
@@ -263,6 +397,12 @@ const comparisonModuleSchema = z.union([
   weatherComparisonTableModuleSchema,
   authoredComparisonChartModuleSchema,
   weatherComparisonChartModuleSchema,
+  calloutModuleSchema,
+  badgesModuleSchema,
+  factsModuleSchema,
+  prosConsModuleSchema,
+  rankedModuleSchema,
+  meterModuleSchema,
   sourceModuleSchema,
 ]);
 
@@ -321,6 +461,13 @@ const researchModuleSchema = z.discriminatedUnion("type", [
   researchLeadModuleSchema,
   researchEvidenceModuleSchema,
   researchTimelineModuleSchema,
+  calloutModuleSchema,
+  badgesModuleSchema,
+  factsModuleSchema,
+  prosConsModuleSchema,
+  rankedModuleSchema,
+  meterModuleSchema,
+  quoteModuleSchema,
   sourceModuleSchema,
 ]);
 
@@ -588,8 +735,13 @@ const weatherResultSchema = z
 type WeatherLocationEvidence = z.infer<typeof locationWeatherSchema>;
 type ActivityWindowEvidence = z.infer<typeof activityWindowSchema>;
 type PlanModule = SurfacePlan["modules"][number];
+type InsightModule = Extract<PlanModule, { type: (typeof INSIGHT_MODULE_TYPES)[number] }>;
+
+export function isInsightModule(module: { type: string }): module is InsightModule {
+  return (INSIGHT_MODULE_TYPES as readonly string[]).includes(module.type);
+}
 type WeatherModule = Extract<SurfacePlan, { kind: "weather" }>["modules"][number];
-type WeatherContentModule = Exclude<WeatherModule, { type: "sources" }>;
+type WeatherContentModule = Exclude<WeatherModule, { type: "sources" | "callout" | "badges" }>;
 type WeatherComparisonSummaryModule = z.infer<typeof weatherComparisonSummaryModuleSchema>;
 type AuthoredComparisonTableModule = z.infer<typeof authoredComparisonTableModuleSchema>;
 type WeatherComparisonTableModule = z.infer<typeof weatherComparisonTableModuleSchema>;
@@ -754,9 +906,13 @@ function contentSourceIds(
   for (const module of plan.modules) {
     if (isSourceModule(module)) continue;
     if ("sourceIds" in module) sourceIds.push(...module.sourceIds);
-    if (module.type === "evidence" || module.type === "timeline") {
+    if (module.type === "evidence" || module.type === "timeline" || module.type === "ranked") {
       for (const item of module.items) sourceIds.push(item.sourceId);
     }
+    if (module.type === "proscons") {
+      for (const item of [...module.pros, ...module.cons]) sourceIds.push(item.sourceId);
+    }
+    if (module.type === "quote") sourceIds.push(module.sourceId);
 
     if (plan.kind === "weather" && isWeatherContentModule(module)) {
       if (generalWeatherId) sourceIds.push(generalWeatherId);
@@ -1231,6 +1387,14 @@ function weatherNarrativeFields(plan: SurfacePlan): WeatherNarrativeField[] {
         text: module.label,
         policy: plan.kind === "comparison" ? "validate-comparison" : "validate-weather",
       });
+      continue;
+    }
+    if (module.type === "callout" || module.type === "badges") {
+      const policy = plan.kind === "comparison" ? "validate-comparison" : "validate-weather";
+      const texts = module.type === "callout"
+        ? [module.title, module.body]
+        : [...(module.label ? [module.label] : []), ...module.badges.map((badge) => badge.label)];
+      for (const text of texts) fields.push({ text, policy });
       continue;
     }
     if (plan.kind === "weather") {
@@ -2239,12 +2403,15 @@ function requestedCoverageIssues(
             ? [module.columns, module.rows]
             : [module.metrics, module.metric, module.forecastKind],
         );
-      } else {
+      } else if (module.type === "chart") {
         structuredComparisonContent.push(
           "labels" in module
             ? [module.labels, module.series.map((series) => series.label), module.unit]
             : [module.metric, module.forecastKind],
         );
+      } else {
+        // Insight modules may also carry requested comparison criteria.
+        structuredComparisonContent.push(module);
       }
     }
     const searchablePlan = JSON.stringify(structuredComparisonContent).toLocaleLowerCase("en-US");
@@ -2479,7 +2646,7 @@ export function validateSurfacePlan(
     if (!weatherBacked) issues.push("Weather plan has no normalized evidence to reference.");
 
     for (const module of plan.modules) {
-      if (module.type === "sources") continue;
+      if (module.type === "sources" || isInsightModule(module)) continue;
       const location = state.locations[module.locationIndex];
       if (!location) {
         issues.push(`Weather evidence location index ${module.locationIndex} is out of range.`);
@@ -2566,6 +2733,14 @@ export function validateSurfacePlan(
   if (plan.kind === "comparison") {
     for (const module of plan.modules) {
       if (module.type === "sources") continue;
+      if (isInsightModule(module)) {
+        if (weatherBacked && !TEXT_ONLY_INSIGHT_TYPES.has(module.type)) {
+          issues.push(
+            `Weather-backed comparisons cannot include authored ${module.type} figures; use evidence-referenced tables or charts.`,
+          );
+        }
+        continue;
+      }
       const evidenceReferenced =
         isWeatherComparisonSummary(module) ||
         isWeatherComparisonTable(module) ||
@@ -2600,6 +2775,7 @@ export function validateSurfacePlan(
               issues.push("Comparison chart series must align with the label count.");
             }
           }
+          issues.push(...chartShapeIssues(module));
         }
         continue;
       }
@@ -2673,12 +2849,145 @@ export function validateSurfacePlan(
     }
   }
 
+  for (const module of plan.modules) {
+    if (!isInsightModule(module)) continue;
+    if (plan.kind === "weather" && !TEXT_ONLY_INSIGHT_TYPES.has(module.type)) {
+      issues.push(`Weather surfaces cannot include authored ${module.type} content.`);
+    }
+    if (plan.kind !== "research" && module.type === "quote") {
+      issues.push("Quote content is limited to research surfaces.");
+    }
+    issues.push(...insightModuleIssues(module));
+  }
+
   issues.push(...weatherNarrativeIssues(plan, state));
   issues.push(...requestedCoverageIssues(plan, context, state));
 
   return issues.length > 0
     ? { success: false, issues: [...new Set(issues)].slice(0, 12) }
     : { success: true, plan };
+}
+
+function insightModuleIssues(module: InsightModule): string[] {
+  const issues: string[] = [];
+  switch (module.type) {
+    case "facts":
+      if (!uniqueStrings(module.facts.map((fact) => fact.label))) {
+        issues.push("Key fact labels must be unique.");
+      }
+      break;
+    case "meter":
+      for (const meter of module.meters) {
+        if (!(meter.min < meter.max)) issues.push(`Meter ${meter.label} needs an increasing min/max range.`);
+        else if (meter.value < meter.min || meter.value > meter.max) {
+          issues.push(`Meter ${meter.label} value must fall within its range.`);
+        }
+      }
+      if (!uniqueStrings(module.meters.map((meter) => meter.label))) {
+        issues.push("Meter labels must be unique.");
+      }
+      break;
+    case "ranked":
+      if (!uniqueStrings(module.items.map((item) => item.title))) {
+        issues.push("Ranked item titles must be unique.");
+      }
+      break;
+    case "proscons":
+      if (!uniqueStrings([...module.pros, ...module.cons].map((point) => point.text))) {
+        issues.push("Pros and cons points must be unique.");
+      }
+      break;
+    case "badges":
+      if (!uniqueStrings(module.badges.map((badge) => badge.label))) {
+        issues.push("Badge labels must be unique.");
+      }
+      break;
+    case "callout":
+    case "quote":
+      break;
+  }
+  return issues;
+}
+
+/** Compiles one validated insight module into exactly one trusted component. */
+function compileInsightModule(id: string, module: InsightModule): Record<string, unknown> {
+  switch (module.type) {
+    case "callout":
+      return {
+        id,
+        component: "Callout",
+        tone: module.tone,
+        ...(module.icon ? { icon: module.icon } : {}),
+        title: module.title,
+        body: module.body,
+        sourceIds: [...module.sourceIds],
+      };
+    case "badges":
+      return {
+        id,
+        component: "BadgeRow",
+        ...(module.label ? { label: module.label } : {}),
+        badges: module.badges.map((badge) => ({ ...badge })),
+        sourceIds: [...module.sourceIds],
+      };
+    case "facts":
+      return {
+        id,
+        component: "KeyFacts",
+        ...(module.label ? { label: module.label } : {}),
+        facts: module.facts.map((fact) => ({
+          label: fact.label,
+          value: fact.value,
+          ...(fact.detail ? { detail: fact.detail } : {}),
+          ...(fact.trend ? { trend: fact.trend } : {}),
+          ...(fact.sparkline ? { sparkline: [...fact.sparkline] } : {}),
+        })),
+        sourceIds: [...module.sourceIds],
+      };
+    case "proscons":
+      return {
+        id,
+        component: "ProsCons",
+        subject: module.subject,
+        pros: module.pros.map((point) => ({ ...point })),
+        cons: module.cons.map((point) => ({ ...point })),
+      };
+    case "ranked":
+      return {
+        id,
+        component: "RankedList",
+        label: module.label,
+        order: module.order,
+        items: module.items.map((item) => ({
+          title: item.title,
+          detail: item.detail,
+          ...(item.score ? { score: item.score } : {}),
+          sourceId: item.sourceId,
+        })),
+      };
+    case "meter":
+      return {
+        id,
+        component: "ScoreMeter",
+        ...(module.label ? { label: module.label } : {}),
+        meters: module.meters.map((meter) => ({
+          label: meter.label,
+          value: meter.value,
+          min: meter.min,
+          max: meter.max,
+          ...(meter.unit ? { unit: meter.unit } : {}),
+        })),
+        sourceIds: [...module.sourceIds],
+      };
+    case "quote":
+      return {
+        id,
+        component: "PullQuote",
+        text: module.text,
+        attribution: module.attribution,
+        sourceId: module.sourceId,
+      };
+  }
 }
 
 interface CompileSurfacePlanInput {
@@ -3007,6 +3316,12 @@ export function compileSurfacePlan({
     if (module.type === "sources") {
       roots.push(baseId);
       body.push(sourceNode(baseId, module));
+      return;
+    }
+
+    if (isInsightModule(module)) {
+      roots.push(baseId);
+      body.push(compileInsightModule(baseId, module));
       return;
     }
 

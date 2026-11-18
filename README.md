@@ -49,6 +49,7 @@ npm run dev:full
 | `ALLOWED_ORIGINS` | Production | Comma-separated exact origins accepted by `/api/agent`; production must include `https://lab.jalbright.dev`. Vercel's current preview origin is also accepted automatically. |
 | `ALLOW_DEMO_FIXTURES` | Development only | Set to `true` only when recorded server fixtures should be allowed without live provider keys. Leave false or unset in production. |
 | `SURFACE_COMPOSER_VERSION` | No | `spec-v1` keeps the original path, `plan-v2` uses validated recipes, and `grammar-v3` uses the constrained composition grammar for supported domains. |
+| `SURFACE_GRAMMAR_V3_TOOLKIT` | No | `base` (default) advertises the original grammar-v3 vocabulary to Gemini. `extended` also advertises the extended toolkit: accordion, scroller, columns, and aside layouts; extra style tokens; cited insight modules; and area, stacked-bar, donut, and range charts. The server validates and renders both vocabularies in either mode. |
 | `SURFACE_GRAMMAR_V3_ROLLOUT_PERCENT` | Grammar v3 | Stable grammar-v3 allocation from `0` through `100`. Defaults to `100` only when `grammar-v3` is selected; use 10, 50, and 100 for a staged ramp. |
 
 `VERCEL_ENV`, `VERCEL_URL`, and `VERCEL_PROJECT_ID` are supplied by Vercel and should not be copied into local configuration unless a specific test requires them.
@@ -67,7 +68,7 @@ npm run dev:full
 | `npm run test:coverage` | Run tests with V8 coverage reports. |
 | `npm run test:e2e` | Run Playwright against desktop and mobile projects. |
 | `npm run eval` | Run the 40-prompt contract evaluation set. |
-| `npm run eval:ui` | Validate recorded plan-v2 and grammar-v3 cases, build the app, then compare 51 Chromium reference screenshots with axe and overflow checks. |
+| `npm run eval:ui` | Validate recorded plan-v2 and grammar-v3 cases, build the app, then compare 61 Chromium reference screenshots with axe and overflow checks. |
 | `npm run eval:ui:live` | Opt in to three live Gemini composition samples per recorded-evidence case (54 total); a Gemini key is required to run the samples. |
 | `npm run eval:ui:live:v3` | Run the separate 54-sample grammar-v3 shadow gate against recorded evidence; no output is rendered to users. |
 

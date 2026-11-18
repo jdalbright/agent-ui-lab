@@ -1,6 +1,20 @@
 import { z } from "zod";
 import { LIMITS } from "../../shared/constants.js";
 import {
+  CARD_VARIANTS,
+  COLUMN_SPANS,
+  DIVIDER_STYLES,
+  GRID_COLUMNS,
+  LAYOUT_GAPS,
+  SECTION_ROLES,
+  SECTION_WIDTHS,
+  SPLIT_RATIOS,
+  STACK_ALIGNMENTS,
+  SURFACE_ICONS,
+  SURFACE_PROMINENCE,
+  SURFACE_TONES,
+} from "../../shared/layout-tokens.js";
+import {
   measureSurfaceContent,
   SURFACE_CONTENT_BUDGETS,
 } from "../../shared/surface-content-budget.js";
@@ -43,9 +57,10 @@ const safeLabel = (maximum: number) => z
 const safeLabelSchema = safeLabel(80);
 const generativeEmphasisSchema = z.enum(["answer", "evidence", "exploration"]);
 const childIdsSchema = z.array(idSchema).min(1).max(20);
-const gapSchema = z.enum(["compact", "regular", "generous"]);
-const toneSchema = z.enum(["neutral", "accent", "caution"]);
-const prominenceSchema = z.enum(["lead", "standard", "quiet"]);
+const gapSchema = z.enum(LAYOUT_GAPS);
+const toneSchema = z.enum(SURFACE_TONES);
+const prominenceSchema = z.enum(SURFACE_PROMINENCE);
+const iconSchema = z.enum(SURFACE_ICONS);
 
 const stackLayoutSchema = z
   .object({
@@ -53,7 +68,7 @@ const stackLayoutSchema = z
     type: z.literal("stack"),
     children: childIdsSchema,
     gap: gapSchema,
-    align: z.enum(["start", "center", "stretch"]),
+    align: z.enum(STACK_ALIGNMENTS),
   })
   .strict();
 
@@ -62,7 +77,7 @@ const gridLayoutSchema = z
     id: idSchema,
     type: z.literal("grid"),
     children: childIdsSchema,
-    columns: z.enum(["adaptive", "two", "three"]),
+    columns: z.enum(GRID_COLUMNS),
     gap: gapSchema,
   })
   .strict();
@@ -72,7 +87,7 @@ const splitLayoutSchema = z
     id: idSchema,
     type: z.literal("split"),
     children: z.array(idSchema).min(2).max(3),
-    ratio: z.enum(["equal", "wide-start", "wide-end"]),
+    ratio: z.enum(SPLIT_RATIOS),
   })
   .strict();
 
@@ -82,9 +97,11 @@ const sectionLayoutSchema = z
     type: z.literal("section"),
     children: childIdsSchema,
     label: safeLabelSchema.optional(),
-    role: z.enum(["primary", "supporting", "reference"]),
+    role: z.enum(SECTION_ROLES),
     tone: toneSchema,
     prominence: prominenceSchema,
+    width: z.enum(SECTION_WIDTHS).optional(),
+    icon: iconSchema.optional(),
   })
   .strict();
 
@@ -95,6 +112,9 @@ const cardLayoutSchema = z
     children: z.array(idSchema).min(1).max(8),
     tone: toneSchema,
     prominence: prominenceSchema,
+    variant: z.enum(CARD_VARIANTS).optional(),
+    icon: iconSchema.optional(),
+    label: safeLabelSchema.optional(),
   })
   .strict();
 
@@ -148,6 +168,71 @@ const dividerLayoutSchema = z
     id: idSchema,
     type: z.literal("divider"),
     label: safeLabelSchema.optional(),
+    style: z.enum(DIVIDER_STYLES).optional(),
+  })
+  .strict();
+
+const accordionLayoutSchema = z
+  .object({
+    id: idSchema,
+    type: z.literal("accordion"),
+    children: z.array(idSchema).min(2).max(5),
+    labels: z.array(safeLabel(60)).min(2).max(5),
+    defaultOpenIndex: z.number().int().min(0).max(4).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.children.length !== value.labels.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["labels"],
+        message: "Accordion labels must match the panel child count.",
+      });
+    }
+    if (value.defaultOpenIndex !== undefined && value.defaultOpenIndex >= value.children.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultOpenIndex"],
+        message: "The default accordion panel must reference an available child.",
+      });
+    }
+  });
+
+const scrollerLayoutSchema = z
+  .object({
+    id: idSchema,
+    type: z.literal("scroller"),
+    children: z.array(idSchema).min(2).max(8),
+    label: safeLabelSchema,
+  })
+  .strict();
+
+const columnsLayoutSchema = z
+  .object({
+    id: idSchema,
+    type: z.literal("columns"),
+    children: z.array(idSchema).min(2).max(6),
+    spans: z.array(z.enum(COLUMN_SPANS)).min(2).max(6),
+    gap: gapSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.children.length !== value.spans.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["spans"],
+        message: "Column spans must match the column child count.",
+      });
+    }
+  });
+
+const asideLayoutSchema = z
+  .object({
+    id: idSchema,
+    type: z.literal("aside"),
+    children: z.array(idSchema).length(2),
+    side: z.enum(["start", "end"]),
+    label: safeLabelSchema.optional(),
   })
   .strict();
 
@@ -161,6 +246,10 @@ export const GenerativeLayoutNodeSchema = z.union([
   tabsLayoutSchema,
   disclosureLayoutSchema,
   dividerLayoutSchema,
+  accordionLayoutSchema,
+  scrollerLayoutSchema,
+  columnsLayoutSchema,
+  asideLayoutSchema,
 ]);
 
 function contentNodeSchema(moduleSchema: z.ZodTypeAny) {
@@ -267,7 +356,7 @@ function childrenOf(node: GenerativeLayoutNode): readonly string[] {
 }
 
 function isInteractive(node: GenerativeLayoutNode): boolean {
-  return node.type === "tabs" || node.type === "disclosure";
+  return node.type === "tabs" || node.type === "disclosure" || node.type === "accordion";
 }
 
 function boundedIssues(issues: readonly string[]): string[] {
@@ -368,7 +457,12 @@ export function validateGenerativeSurfacePlan(
   const readingOrder: string[] = [];
   let maximumDepth = 1;
 
-  const walk = (id: string, depth: number, interactiveAncestor: boolean): void => {
+  const walk = (
+    id: string,
+    depth: number,
+    interactiveAncestor: boolean,
+    asideSupporting = false,
+  ): void => {
     maximumDepth = Math.max(maximumDepth, depth);
     if (depth > LIMITS.surfaceDepth) {
       issues.push(`Layout depth exceeds ${LIMITS.surfaceDepth} levels.`);
@@ -386,6 +480,9 @@ export function validateGenerativeSurfacePlan(
       }
       if (interactiveAncestor && content.module.type === "alerts") {
         issues.push("Critical alerts cannot be hidden in an interactive container.");
+      }
+      if (asideSupporting && content.module.type === primaryType) {
+        issues.push("Primary content must sit in the main column of an aside layout.");
       }
       return;
     }
@@ -405,12 +502,17 @@ export function validateGenerativeSurfacePlan(
     }
     active.add(id);
     visitedLayouts.add(id);
-    for (const childId of childrenOf(node)) {
+    childrenOf(node).forEach((childId, childIndex) => {
       if (layoutById.has(childId)) {
         layoutParentCounts.set(childId, (layoutParentCounts.get(childId) ?? 0) + 1);
       }
-      walk(childId, depth + 1, interactiveAncestor || currentInteractive);
-    }
+      walk(
+        childId,
+        depth + 1,
+        interactiveAncestor || currentInteractive,
+        asideSupporting || (node.type === "aside" && childIndex === 1),
+      );
+    });
     active.delete(id);
   };
   walk(plan.layout.rootId, 2, false);
@@ -478,9 +580,20 @@ function compileLayoutNode(
         role: node.role,
         tone: node.tone,
         prominence: node.prominence,
+        ...(node.width ? { width: node.width } : {}),
+        ...(node.icon ? { icon: node.icon } : {}),
       };
     case "card":
-      return { id: node.id, component: "Card", children, tone: node.tone, prominence: node.prominence };
+      return {
+        id: node.id,
+        component: "Card",
+        children,
+        tone: node.tone,
+        prominence: node.prominence,
+        ...(node.variant ? { variant: node.variant } : {}),
+        ...(node.icon ? { icon: node.icon } : {}),
+        ...(node.label ? { label: node.label } : {}),
+      };
     case "rail":
       return { id: node.id, component: "Rail", children, ...(node.label ? { label: node.label } : {}) };
     case "tabs":
@@ -500,7 +613,32 @@ function compileLayoutNode(
         defaultOpen: node.defaultOpen,
       };
     case "divider":
-      return { id: node.id, component: "Divider", ...(node.label ? { label: node.label } : {}) };
+      return {
+        id: node.id,
+        component: "Divider",
+        ...(node.label ? { label: node.label } : {}),
+        ...(node.style ? { style: node.style } : {}),
+      };
+    case "accordion":
+      return {
+        id: node.id,
+        component: "Accordion",
+        children,
+        labels: [...node.labels],
+        ...(node.defaultOpenIndex === undefined ? {} : { defaultOpenIndex: node.defaultOpenIndex }),
+      };
+    case "scroller":
+      return { id: node.id, component: "Scroller", children, label: node.label };
+    case "columns":
+      return { id: node.id, component: "Columns", children, spans: [...node.spans], gap: node.gap };
+    case "aside":
+      return {
+        id: node.id,
+        component: "Aside",
+        children,
+        side: node.side,
+        ...(node.label ? { label: node.label } : {}),
+      };
   }
 }
 

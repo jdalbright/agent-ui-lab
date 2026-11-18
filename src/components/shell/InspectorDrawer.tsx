@@ -85,6 +85,10 @@ export interface SafeTraceEntry {
     | "tabs"
     | "disclosure"
     | "divider"
+    | "accordion"
+    | "scroller"
+    | "columns"
+    | "aside"
     | "plan-v2-fallback"
     | "unknown";
   contentNodeCount?: number;

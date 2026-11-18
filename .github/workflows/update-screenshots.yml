@@ -1,0 +1,58 @@
+name: Update screenshot baselines
+
+# Regenerates the surface-recipes reference screenshots on CI's Ubuntu
+# Chromium so committed baselines match the renderer that gates them.
+# Trigger: push a non-main branch whose head commit message contains
+# [update-screenshots]. Results go to screenshot-baselines/<branch> for
+# review; this workflow never pushes to the source branch.
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - "screenshot-baselines/**"
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    if: contains(github.event.head_commit.message, '[update-screenshots]')
+    name: Regenerate surface-recipes screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: true
+      RUN_LIVE_UI_EVALS: "false"
+      SURFACE_COMPOSER_VERSION: spec-v1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: Regenerate reference screenshots
+        run: npx playwright test e2e/surface-recipes.spec.ts --project=desktop --workers=4 --update-snapshots
+
+      - name: Push baselines to a review branch
+        env:
+          SOURCE_BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add e2e/surface-recipes.spec.ts-snapshots
+          git commit -m "Regenerate surface-recipes screenshots on CI Chromium" || echo "No screenshot changes."
+          git push --force origin "HEAD:refs/heads/screenshot-baselines/${SOURCE_BRANCH}"

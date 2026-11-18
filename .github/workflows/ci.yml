@@ -13,15 +13,16 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CI: true
+  RUN_LIVE_UI_EVALS: "false"
+  SURFACE_COMPOSER_VERSION: spec-v1
+
 jobs:
-  quality:
-    name: Release gates
+  checks:
+    name: Static and unit gates
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      CI: true
-      RUN_LIVE_UI_EVALS: "false"
-      SURFACE_COMPOSER_VERSION: spec-v1
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -32,11 +33,16 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install locked dependencies
-        run: npm ci
+      - name: Restore node_modules
+        id: modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install locked dependencies
+        if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci
 
       - name: Type-check
         run: npm run typecheck
@@ -50,8 +56,55 @@ jobs:
       - name: Run safety evaluation
         run: npm run eval
 
-      - name: Run semantic, accessibility, and screenshot UI-quality evaluation
-        run: npm run eval:ui
+      - name: Run semantic UI-quality evaluation
+        run: npm run eval:ui:semantic
+
+  browser:
+    name: Browser, accessibility, and screenshot gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Restore node_modules
+        id: modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
+
+      - name: Install locked dependencies
+        if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Restore Playwright browsers
+        id: browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-webkit-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Desktop tests use Chromium; the mobile project (iPhone 13) uses WebKit.
+      - name: Install Chromium and WebKit
+        if: steps.browsers.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Install browser system dependencies
+        if: steps.browsers.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium webkit
+
+      - name: Build
+        run: npm run build
+
+      - name: Run accessibility and screenshot UI-quality evaluation
+        run: npx playwright test e2e/surface-recipes.spec.ts --project=desktop --workers=4
 
       - name: Run remaining shell and interaction browser checks
         run: npm run test:e2e:app

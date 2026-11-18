@@ -12,6 +12,7 @@ import {
   type RecordedUiQualityCandidate,
 } from "./ui-quality-fixtures.js";
 import {
+  buildRecordedExtendedToolkitCandidate,
   buildRecordedGenerativeUiQualityCandidate,
   type GenerativeFixtureLayoutFamily,
 } from "./generative-ui-quality-fixtures.js";
@@ -27,13 +28,15 @@ export interface RecordedUiQualityStream {
 export function buildRecordedGenerativeUiQualityStream(
   testCase: UiQualityCase,
   request: unknown,
-  family: GenerativeFixtureLayoutFamily,
+  family: GenerativeFixtureLayoutFamily | "extended",
 ): { readonly events: readonly StreamEvent[] } {
   const parsedRequest = AgentRequestSchema.parse(request);
   if (parsedRequest.prompt !== testCase.prompt) {
     throw new TypeError(`Recorded case ${testCase.id} does not match the submitted prompt.`);
   }
-  const candidate = buildRecordedGenerativeUiQualityCandidate(testCase, family);
+  const candidate = family === "extended"
+    ? buildRecordedExtendedToolkitCandidate(testCase)
+    : buildRecordedGenerativeUiQualityCandidate(testCase, family);
   const invariantChecks = evaluateGenerativeSurfacePlanQuality(
     candidate.plan,
     {

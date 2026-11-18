@@ -4,6 +4,8 @@ export type RuntimeMode = "production" | "preview" | "development" | "test";
 
 export type SurfaceComposerVersion = "spec-v1" | "plan-v2" | "grammar-v3";
 
+export type SurfaceGrammarToolkit = "base" | "extended";
+
 export type RuntimeIssueCode =
   | "LIVE_PROVIDERS_REQUIRED"
   | "CONTEXT_SECRET_REQUIRED"
@@ -14,7 +16,8 @@ export type RuntimeIssueCode =
   | "ORIGIN_ALLOWLIST_INVALID"
   | "DEMO_FIXTURES_FORBIDDEN"
   | "SURFACE_COMPOSER_VERSION_INVALID"
-  | "SURFACE_GRAMMAR_V3_ROLLOUT_INVALID";
+  | "SURFACE_GRAMMAR_V3_ROLLOUT_INVALID"
+  | "SURFACE_GRAMMAR_V3_TOOLKIT_INVALID";
 
 export type RuntimeConfig = {
   mode: RuntimeMode;
@@ -30,6 +33,7 @@ export type RuntimeConfig = {
   allowDemoFixtures: boolean;
   surfaceComposerVersion: SurfaceComposerVersion;
   surfaceGrammarV3RolloutPercent: number;
+  surfaceGrammarV3Toolkit: SurfaceGrammarToolkit;
 };
 
 export type RuntimeReadinessMetadata = {
@@ -167,6 +171,11 @@ export function readRuntimeConfig(
     : surfaceComposerVersion === "grammar-v3"
       ? 100
       : 0;
+  const toolkitValue = value(environment, "SURFACE_GRAMMAR_V3_TOOLKIT");
+  const toolkitIsValid =
+    toolkitValue === undefined || toolkitValue === "base" || toolkitValue === "extended";
+  const surfaceGrammarV3Toolkit: SurfaceGrammarToolkit =
+    toolkitValue === "extended" ? "extended" : "base";
   const originResult = allowedOrigins(environment);
   const issues = new Set<RuntimeIssueCode>();
 
@@ -202,6 +211,7 @@ export function readRuntimeConfig(
     issues.add("SURFACE_COMPOSER_VERSION_INVALID");
   }
   if (!rolloutIsValid) issues.add("SURFACE_GRAMMAR_V3_ROLLOUT_INVALID");
+  if (!toolkitIsValid) issues.add("SURFACE_GRAMMAR_V3_TOOLKIT_INVALID");
 
   if (issues.size > 0) return { ready: false, issues: [...issues] };
 
@@ -217,6 +227,7 @@ export function readRuntimeConfig(
     allowDemoFixtures,
     surfaceComposerVersion,
     surfaceGrammarV3RolloutPercent,
+    surfaceGrammarV3Toolkit,
   };
 
   return {

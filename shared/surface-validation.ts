@@ -24,7 +24,11 @@ type LayoutNode = Extract<
       | "Section"
       | "Card"
       | "Tabs"
-      | "Disclosure";
+      | "Disclosure"
+      | "Accordion"
+      | "Scroller"
+      | "Columns"
+      | "Aside";
   }
 >;
 
@@ -39,7 +43,11 @@ function isLayoutNode(node: SurfaceNode): node is LayoutNode {
     node.component === "Section" ||
     node.component === "Card" ||
     node.component === "Tabs" ||
-    node.component === "Disclosure"
+    node.component === "Disclosure" ||
+    node.component === "Accordion" ||
+    node.component === "Scroller" ||
+    node.component === "Columns" ||
+    node.component === "Aside"
   );
 }
 
@@ -52,6 +60,12 @@ function referencedSourceIds(spec: SurfaceSpec): string[] {
       for (const item of node.items) {
         if ("sourceId" in item && item.sourceId) ids.push(item.sourceId);
       }
+    }
+    if (node.component === "ProsCons") {
+      for (const item of [...node.pros, ...node.cons]) ids.push(item.sourceId);
+    }
+    if (node.component === "RankedList") {
+      for (const item of node.items) ids.push(item.sourceId);
     }
   }
   return ids;

@@ -56,6 +56,17 @@ export const TRUSTED_COMPONENT_NAMES = [
   "EvidenceList",
   "Timeline",
   "SourceList",
+  "Accordion",
+  "Scroller",
+  "Columns",
+  "Aside",
+  "KeyFacts",
+  "Callout",
+  "ProsCons",
+  "RankedList",
+  "ScoreMeter",
+  "PullQuote",
+  "BadgeRow",
 ] as const;
 
 export type TrustedComponentName = (typeof TRUSTED_COMPONENT_NAMES)[number];
