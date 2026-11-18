@@ -49,6 +49,7 @@ npm run dev:full
 | `ALLOWED_ORIGINS` | Production | Comma-separated exact origins accepted by `/api/agent`; production must include `https://lab.jalbright.dev`. Vercel's current preview origin is also accepted automatically. |
 | `ALLOW_DEMO_FIXTURES` | Development only | Set to `true` only when recorded server fixtures should be allowed without live provider keys. Leave false or unset in production. |
 | `SURFACE_COMPOSER_VERSION` | No | `spec-v1` keeps the original path, `plan-v2` uses validated recipes, and `grammar-v3` uses the constrained composition grammar for supported domains. |
+| `SURFACE_GRAMMAR_V3_TOOLKIT` | No | `base` (default) advertises the original grammar-v3 vocabulary to Gemini. `extended` also advertises the extended toolkit: accordion, scroller, columns, and aside layouts; extra style tokens; cited insight modules; and area, stacked-bar, donut, and range charts. The server validates and renders both vocabularies in either mode. |
 | `SURFACE_GRAMMAR_V3_ROLLOUT_PERCENT` | Grammar v3 | Stable grammar-v3 allocation from `0` through `100`. Defaults to `100` only when `grammar-v3` is selected; use 10, 50, and 100 for a staged ramp. |
 
 `VERCEL_ENV`, `VERCEL_URL`, and `VERCEL_PROJECT_ID` are supplied by Vercel and should not be copied into local configuration unless a specific test requires them.

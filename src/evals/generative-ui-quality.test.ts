@@ -3,6 +3,8 @@ import { evaluateGenerativeSurfacePlanQuality } from "../../api/_lib/generative-
 import { lintSurfaceQuality } from "../../api/_lib/surface-quality.js";
 import { UI_QUALITY_CASES } from "./ui-quality-cases.js";
 import {
+  EXTENDED_TOOLKIT_CASE_IDS,
+  buildRecordedExtendedToolkitCandidate,
   buildRecordedGenerativeUiQualityCandidate,
   type GenerativeFixtureLayoutFamily,
 } from "./generative-ui-quality-fixtures.js";
@@ -40,6 +42,39 @@ describe("recorded grammar-v3 quality", () => {
         expect(Object.values(invariants).every(Boolean), `${caseId}/${family}`).toBe(true);
         expect(semantic.success, `${caseId}/${family}: ${JSON.stringify(semantic.issues)}`).toBe(true);
       }
+    },
+  );
+});
+
+describe("recorded extended-toolkit grammar-v3 quality", () => {
+  it.each(EXTENDED_TOOLKIT_CASE_IDS)(
+    "keeps %s answer-first, cited, and within budget with new layouts and insights",
+    (caseId) => {
+      const testCase = UI_QUALITY_CASES.find((candidate) => candidate.id === caseId);
+      if (!testCase) throw new TypeError(`Missing UI quality case ${caseId}.`);
+      const candidate = buildRecordedExtendedToolkitCandidate(testCase);
+      const invariants = evaluateGenerativeSurfacePlanQuality(
+        candidate.plan,
+        {
+          sources: candidate.retrieval.sources,
+          evidence: candidate.retrieval.evidence,
+          prompt: testCase.prompt,
+          clientContext: candidate.clientContext,
+        },
+        candidate.spec,
+      );
+      const semantic = lintSurfaceQuality({
+        benchmark: testCase,
+        plan: candidate.plan,
+        spec: candidate.spec,
+        sources: candidate.retrieval.sources,
+        mode: "grammar-v3",
+      });
+
+      expect(invariants).toSatisfy((checks: Record<string, boolean>) => Object.values(checks).every(Boolean));
+      expect(semantic.success, JSON.stringify(semantic.issues)).toBe(true);
+      const names = candidate.spec.components.map((node) => node.component);
+      expect(names.some((name) => ["Aside", "Columns", "Accordion", "Scroller"].includes(name))).toBe(true);
     },
   );
 });

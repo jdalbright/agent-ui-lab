@@ -68,7 +68,7 @@ async function openRecordedSurface(
 async function openRecordedGenerativeSurface(
   page: Page,
   testCase: UiQualityCase,
-  family: "stack" | "grid" | "section",
+  family: "stack" | "grid" | "section" | "extended",
 ) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.route("**/api/agent", async (route) => {
@@ -203,6 +203,46 @@ test.describe("grammar-v3 responsive benchmark", () => {
       });
     }
   }
+});
+
+// The extended toolkit is gated by overflow, accessibility, and interaction
+// checks. Reference screenshots are intentionally not committed yet; generate
+// them with the pinned Playwright Chromium before adding toHaveScreenshot here.
+test.describe("grammar-v3 extended toolkit", () => {
+  test.skip(({ isMobile }) => isMobile, "The explicit viewport matrix runs in Desktop Chrome.");
+
+  for (const caseId of ["QR02", "QC04"] as const) {
+    for (const viewport of GRAMMAR_VIEWPORTS) {
+      test(`${caseId} extended at ${viewport.width}px`, async ({ page }) => {
+        await page.setViewportSize(viewport);
+        await openRecordedGenerativeSurface(page, qualityCase(caseId), "extended");
+
+        const frame = page.locator('[data-composition-mode="grammar-v3"]');
+        await expect(frame).toBeVisible({ timeout: 10_000 });
+        await expect(page.locator(".a2ui-columns")).toBeVisible();
+        const dimensions = await page.evaluate(() => ({
+          clientWidth: document.documentElement.clientWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+        }));
+        expect(dimensions.scrollWidth, JSON.stringify(dimensions)).toBeLessThanOrEqual(
+          dimensions.clientWidth,
+        );
+        await expectNoSeriousViolations(page);
+      });
+    }
+  }
+
+  test("QC04 accordion panels toggle and keep the scorecard reachable", async ({ page }) => {
+    await page.setViewportSize({ width: 1_024, height: 1_024 });
+    await openRecordedGenerativeSurface(page, qualityCase("QC04"), "extended");
+    const scorecard = page.getByRole("button", { name: "Scorecard" });
+    const ranking = page.getByRole("button", { name: "Recommendation by host" });
+    await expect(scorecard).toHaveAttribute("aria-expanded", "true", { timeout: 10_000 });
+    await expect(page.getByRole("table").first()).toBeVisible();
+    await ranking.click();
+    await expect(ranking).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByText("Choose by host framework")).toBeVisible();
+  });
 });
 
 test.describe("motion preference contract", () => {

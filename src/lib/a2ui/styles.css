@@ -2218,6 +2218,7 @@
 /* Callout */
 .a2ui-callout {
   border-inline-start: 4px solid var(--a2ui-info);
+  color: var(--a2ui-ink);
   border-radius: 0.5rem;
   display: flex;
   gap: 0.75rem;

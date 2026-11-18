@@ -28,6 +28,46 @@ The v3 catalog adds `Stack`, `Grid`, `Split`, `Section`, `Card`, `Rail`, `Tabs`,
 
 Tabs and disclosures are read-only local React interactions. Tabs implement arrow, Home, and End keyboard navigation with tab and tabpanel semantics. A primary answer, weather alert, or SourceList cannot be placed inside either interaction. Interactive containers cannot nest. SourceList is compiler-owned as the single final child in logical DOM order.
 
+## Extended toolkit
+
+`SURFACE_GRAMMAR_V3_TOOLKIT=extended` gives Gemini a larger vocabulary. The validator, compiler, and renderer always accept it, so recorded fixtures and rollback do not depend on the flag. The default `base` toolkit keeps the original schema and instructions byte-for-byte. Shared token lists live in `shared/layout-tokens.ts`.
+
+**Layout primitives**
+
+- `accordion`: 2–5 labeled panels with an optional default-open index. It is interactive, so it follows the tab and disclosure rules: no primary content, alerts, or sources inside, and no nesting. Headers are buttons with `aria-expanded` and support arrow, Home, and End focus movement.
+- `scroller`: a labeled, focusable horizontal region of 2–8 peers. Snapping is disabled under reduced motion.
+- `columns`: one span (`third`, `half`, `two-thirds`, `full`) per child on a 12-track grid. It collapses to one column on narrow surfaces.
+- `aside`: exactly two children, main content first and supporting content second, with the side column on the `start` or `end` side. The side column is sticky on wide surfaces. Primary content must sit in the main child, and DOM order always keeps main content first.
+
+**Style tokens**
+
+- Tones add `positive` and `info`.
+- Cards add `variant` (`outlined`, `filled`, `elevated`), an optional `icon`, and an optional `label`.
+- Sections add `width` (`full`, `narrow`) and an optional `icon`.
+- Grids add `four` columns, stacks add `end` alignment, and dividers add `style` (`line`, `space`, `ornament`).
+- Icons come from a closed set of twelve renderer-drawn glyphs.
+
+**Insight modules** are model-authored, bounded, cited, and never primary:
+
+- `callout`
+- `badges`
+- `facts`: key figures with an optional trend and sparkline
+- `proscons`
+- `ranked`
+- `meter`: the value must fall within its min/max range
+- `quote`: research surfaces only
+
+Weather surfaces and weather-backed comparisons accept only `callout` and `badges`. Their text passes the same numeric grounding rules as other weather narrative. Every insight source ID must be issued and covered by the final sources module.
+
+**Chart variants**
+
+- Authored charts add `area`, `stacked-bar` (two or more non-negative series), `donut` (one non-negative series, at most eight slices), and `range` (exactly two series, low then high).
+- Weather-backed charts add `area`.
+- Shape rules live in `shared/chart-shape.ts` and are enforced by both the plan validator and the render contract.
+- Every variant keeps the visible data table.
+
+`npm run eval:ui:semantic` includes two recorded extended compositions, QR02 and QC04. `eval:ui:browser` checks them for overflow, serious axe violations, and accordion interaction at all five grammar widths. Reference screenshots for these compositions are not committed yet.
+
 ## Validation and compilation
 
 Content and layout validate independently before trusted compilation. The validator rejects:
