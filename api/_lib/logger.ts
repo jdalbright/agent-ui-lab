@@ -54,6 +54,10 @@ const LAYOUT_FAMILIES = new Set([
   "tabs",
   "disclosure",
   "divider",
+  "accordion",
+  "scroller",
+  "columns",
+  "aside",
   "plan-v2-fallback",
   "unknown",
 ]);

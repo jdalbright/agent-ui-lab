@@ -70,4 +70,24 @@ describe("surface composer runtime contract", () => {
       expect(JSON.stringify(result)).not.toContain(percent);
     },
   );
+
+  it("defaults the grammar-v3 toolkit to the base vocabulary", () => {
+    expect(readRuntimeConfig({ NODE_ENV: "test" })).toMatchObject({
+      ready: true,
+      config: { surfaceGrammarV3Toolkit: "base" },
+    });
+  });
+
+  it.each(["base", "extended"] as const)("accepts the %s grammar-v3 toolkit", (toolkit) => {
+    expect(
+      readRuntimeConfig({ NODE_ENV: "test", SURFACE_GRAMMAR_V3_TOOLKIT: toolkit }),
+    ).toMatchObject({ ready: true, config: { surfaceGrammarV3Toolkit: toolkit } });
+  });
+
+  it("rejects an unknown toolkit without echoing it", () => {
+    const privateValue = "extended-private-value";
+    const result = readRuntimeConfig({ NODE_ENV: "test", SURFACE_GRAMMAR_V3_TOOLKIT: privateValue });
+    expect(result).toEqual({ ready: false, issues: ["SURFACE_GRAMMAR_V3_TOOLKIT_INVALID"] });
+    expect(JSON.stringify(result)).not.toContain(privateValue);
+  });
 });

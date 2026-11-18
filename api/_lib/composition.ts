@@ -1,4 +1,24 @@
 import { LIMITS } from "../../shared/constants.js";
+import {
+  BADGE_TONES,
+  CALLOUT_TONES,
+  CARD_VARIANTS,
+  CHART_VARIANTS,
+  COLUMN_SPANS,
+  DIVIDER_STYLES,
+  GRID_COLUMNS,
+  LAYOUT_GAPS,
+  SECTION_ROLES,
+  SECTION_WIDTHS,
+  SPLIT_RATIOS,
+  STACK_ALIGNMENTS,
+  SURFACE_ICONS,
+  SURFACE_PROMINENCE,
+  SURFACE_TONES,
+  RANK_ORDERS,
+  TREND_DIRECTIONS,
+  WEATHER_CHART_VARIANTS,
+} from "../../shared/layout-tokens.js";
 import type { TRUSTED_COMPONENT_NAMES } from "../../shared/constants.js";
 import type { ClientContext, SourceRecord, SurfaceSpec } from "../../shared/schemas.js";
 import {
@@ -653,6 +673,8 @@ export interface ComposeSurfaceSpecInput {
   clientContext: ClientContext;
   retrieval: GeminiRetrievalResult;
   signal?: AbortSignal;
+  /** Grammar-v3 vocabulary advertised to Gemini. Defaults to "base". */
+  toolkit?: GrammarToolkit;
 }
 
 export interface CompositionResult {
@@ -1695,107 +1717,315 @@ function surfacePlanResponseSchema(
   return constrainSurfacePlanSchema(schema, constraints);
 }
 
-const grammarGapSchema = enumSchema(["compact", "regular", "generous"]);
-const grammarToneSchema = enumSchema(["neutral", "accent", "caution"]);
-const grammarProminenceSchema = enumSchema(["lead", "standard", "quiet"]);
-const grammarChildrenSchema = uniqueArraySchema(idSchema, 1, 20);
+export type GrammarToolkit = "base" | "extended";
 
-const GRAMMAR_LAYOUT_NODE_SCHEMAS: readonly JsonSchema[] = [
-  strictObject(
+const BASE_GRID_COLUMNS = ["adaptive", "two", "three"] as const;
+const BASE_STACK_ALIGNMENTS = ["start", "center", "stretch"] as const;
+const BASE_TONES = ["neutral", "accent", "caution"] as const;
+
+/**
+ * Gemini-facing layout vocabulary. The base toolkit mirrors the original v3
+ * grammar; the extended toolkit advertises the additional closed tokens and
+ * layout primitives. The server validator accepts both vocabularies.
+ */
+export function grammarLayoutNodeSchemas(toolkit: GrammarToolkit = "base"): readonly JsonSchema[] {
+  const extended = toolkit === "extended";
+  const gap = enumSchema(LAYOUT_GAPS);
+  const tone = enumSchema(extended ? SURFACE_TONES : BASE_TONES);
+  const prominence = enumSchema(SURFACE_PROMINENCE);
+  const children = uniqueArraySchema(idSchema, 1, 20);
+  const icon = enumSchema(SURFACE_ICONS);
+  const schemas: JsonSchema[] = [
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["stack"]),
+        children,
+        gap,
+        align: enumSchema(extended ? STACK_ALIGNMENTS : BASE_STACK_ALIGNMENTS),
+      },
+      ["id", "type", "children", "gap", "align"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["grid"]),
+        children,
+        columns: enumSchema(extended ? GRID_COLUMNS : BASE_GRID_COLUMNS),
+        gap,
+      },
+      ["id", "type", "children", "columns", "gap"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["split"]),
+        children: uniqueArraySchema(idSchema, 2, 3),
+        ratio: enumSchema(SPLIT_RATIOS),
+      },
+      ["id", "type", "children", "ratio"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["section"]),
+        children,
+        label: optionalBoundedString(80),
+        role: enumSchema(SECTION_ROLES),
+        tone,
+        prominence,
+        ...(extended ? { width: enumSchema(SECTION_WIDTHS), icon } : {}),
+      },
+      ["id", "type", "children", "role", "tone", "prominence"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["card"]),
+        children: uniqueArraySchema(idSchema, 1, 8),
+        tone,
+        prominence,
+        ...(extended
+          ? { variant: enumSchema(CARD_VARIANTS), icon, label: optionalBoundedString(80) }
+          : {}),
+      },
+      ["id", "type", "children", "tone", "prominence"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["rail"]),
+        children,
+        label: optionalBoundedString(80),
+      },
+      ["id", "type", "children"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["tabs"]),
+        children: uniqueArraySchema(idSchema, 2, 4),
+        labels: arraySchema(boundedString(40), 2, 4),
+        defaultIndex: { type: "integer", minimum: 0, maximum: 3 },
+      },
+      ["id", "type", "children", "labels", "defaultIndex"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["disclosure"]),
+        children: uniqueArraySchema(idSchema, 1, 4),
+        label: boundedString(80),
+        defaultOpen: { type: "boolean" },
+      },
+      ["id", "type", "children", "label", "defaultOpen"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["divider"]),
+        label: optionalBoundedString(80),
+        ...(extended ? { style: enumSchema(DIVIDER_STYLES) } : {}),
+      },
+      ["id", "type"],
+    ),
+  ];
+  if (!extended) return Object.freeze(schemas);
+  return Object.freeze([
+    ...schemas,
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["accordion"]),
+        children: uniqueArraySchema(idSchema, 2, 5),
+        labels: arraySchema(boundedString(60), 2, 5),
+        defaultOpenIndex: { type: "integer", minimum: 0, maximum: 4 },
+      },
+      ["id", "type", "children", "labels"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["scroller"]),
+        children: uniqueArraySchema(idSchema, 2, 8),
+        label: boundedString(80),
+      },
+      ["id", "type", "children", "label"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["columns"]),
+        children: uniqueArraySchema(idSchema, 2, 6),
+        spans: {
+          ...arraySchema(enumSchema(COLUMN_SPANS), 2, 6),
+          description: "One span per child, in child order.",
+        },
+        gap,
+      },
+      ["id", "type", "children", "spans", "gap"],
+    ),
+    strictObject(
+      {
+        id: idSchema,
+        type: enumSchema(["aside"]),
+        children: {
+          ...arraySchema(idSchema, 2, 2),
+          description: "Exactly two children: main content first, supporting content second.",
+        },
+        side: enumSchema(["start", "end"]),
+        label: optionalBoundedString(80),
+      },
+      ["id", "type", "children", "side"],
+    ),
+  ]);
+}
+
+const finiteNumberSchema: JsonSchema = { type: "number" };
+
+const INSIGHT_MODULE_JSON_SCHEMAS = {
+  callout: strictObject(
     {
-      id: idSchema,
-      type: enumSchema(["stack"]),
-      children: grammarChildrenSchema,
-      gap: grammarGapSchema,
-      align: enumSchema(["start", "center", "stretch"]),
+      type: enumSchema(["callout"]),
+      tone: enumSchema(CALLOUT_TONES),
+      icon: enumSchema(SURFACE_ICONS),
+      title: boundedString(120),
+      body: boundedString(500),
+      sourceIds: sourceIdsSchema,
     },
-    ["id", "type", "children", "gap", "align"],
+    ["type", "tone", "title", "body", "sourceIds"],
   ),
-  strictObject(
+  badges: strictObject(
     {
-      id: idSchema,
-      type: enumSchema(["grid"]),
-      children: grammarChildrenSchema,
-      columns: enumSchema(["adaptive", "two", "three"]),
-      gap: grammarGapSchema,
-    },
-    ["id", "type", "children", "columns", "gap"],
-  ),
-  strictObject(
-    {
-      id: idSchema,
-      type: enumSchema(["split"]),
-      children: uniqueArraySchema(idSchema, 2, 3),
-      ratio: enumSchema(["equal", "wide-start", "wide-end"]),
-    },
-    ["id", "type", "children", "ratio"],
-  ),
-  strictObject(
-    {
-      id: idSchema,
-      type: enumSchema(["section"]),
-      children: grammarChildrenSchema,
+      type: enumSchema(["badges"]),
       label: optionalBoundedString(80),
-      role: enumSchema(["primary", "supporting", "reference"]),
-      tone: grammarToneSchema,
-      prominence: grammarProminenceSchema,
+      badges: arraySchema(
+        strictObject({ label: boundedString(24), tone: enumSchema(BADGE_TONES) }, ["label", "tone"]),
+        1,
+        8,
+      ),
+      sourceIds: sourceIdsSchema,
     },
-    ["id", "type", "children", "role", "tone", "prominence"],
+    ["type", "badges", "sourceIds"],
   ),
-  strictObject(
+  facts: strictObject(
     {
-      id: idSchema,
-      type: enumSchema(["card"]),
-      children: uniqueArraySchema(idSchema, 1, 8),
-      tone: grammarToneSchema,
-      prominence: grammarProminenceSchema,
-    },
-    ["id", "type", "children", "tone", "prominence"],
-  ),
-  strictObject(
-    {
-      id: idSchema,
-      type: enumSchema(["rail"]),
-      children: grammarChildrenSchema,
+      type: enumSchema(["facts"]),
       label: optionalBoundedString(80),
+      facts: arraySchema(
+        strictObject(
+          {
+            label: boundedString(60),
+            value: {
+              ...boundedString(40),
+              description: "A figure copied from the cited evidence, with its unit.",
+            },
+            detail: optionalBoundedString(160),
+            trend: enumSchema(TREND_DIRECTIONS),
+            sparkline: {
+              ...arraySchema(finiteNumberSchema, 3, 12),
+              description: "Optional ordered evidence values for a tiny trend line.",
+            },
+          },
+          ["label", "value"],
+        ),
+        2,
+        6,
+      ),
+      sourceIds: sourceIdsSchema,
     },
-    ["id", "type", "children"],
+    ["type", "facts", "sourceIds"],
   ),
-  strictObject(
+  proscons: strictObject(
     {
-      id: idSchema,
-      type: enumSchema(["tabs"]),
-      children: uniqueArraySchema(idSchema, 2, 4),
-      labels: arraySchema(boundedString(40), 2, 4),
-      defaultIndex: { type: "integer", minimum: 0, maximum: 3 },
+      type: enumSchema(["proscons"]),
+      subject: boundedString(120),
+      pros: arraySchema(strictObject({ text: boundedString(240), sourceId: sourceIdSchema }, ["text", "sourceId"]), 1, 5),
+      cons: arraySchema(strictObject({ text: boundedString(240), sourceId: sourceIdSchema }, ["text", "sourceId"]), 1, 5),
     },
-    ["id", "type", "children", "labels", "defaultIndex"],
+    ["type", "subject", "pros", "cons"],
   ),
-  strictObject(
+  ranked: strictObject(
     {
-      id: idSchema,
-      type: enumSchema(["disclosure"]),
-      children: uniqueArraySchema(idSchema, 1, 4),
+      type: enumSchema(["ranked"]),
       label: boundedString(80),
-      defaultOpen: { type: "boolean" },
+      order: enumSchema(RANK_ORDERS),
+      items: arraySchema(
+        strictObject(
+          {
+            title: boundedString(120),
+            detail: boundedString(320),
+            score: optionalBoundedString(24),
+            sourceId: sourceIdSchema,
+          },
+          ["title", "detail", "sourceId"],
+        ),
+        2,
+        8,
+      ),
     },
-    ["id", "type", "children", "label", "defaultOpen"],
+    ["type", "label", "order", "items"],
   ),
-  strictObject(
+  meter: strictObject(
     {
-      id: idSchema,
-      type: enumSchema(["divider"]),
+      type: enumSchema(["meter"]),
       label: optionalBoundedString(80),
+      meters: arraySchema(
+        strictObject(
+          {
+            label: boundedString(60),
+            value: finiteNumberSchema,
+            min: finiteNumberSchema,
+            max: finiteNumberSchema,
+            unit: optionalBoundedString(16),
+          },
+          ["label", "value", "min", "max"],
+        ),
+        1,
+        4,
+      ),
+      sourceIds: sourceIdsSchema,
     },
-    ["id", "type"],
+    ["type", "meters", "sourceIds"],
   ),
-];
+  quote: strictObject(
+    {
+      type: enumSchema(["quote"]),
+      text: { ...boundedString(280), description: "A short verbatim excerpt from the cited source." },
+      attribution: boundedString(120),
+      sourceId: sourceIdSchema,
+    },
+    ["type", "text", "attribution", "sourceId"],
+  ),
+} as const satisfies Record<string, JsonSchema>;
+
+function extendedInsightSchemas(kind: PlanKind, weatherBackedComparison: boolean): JsonSchema[] {
+  const { callout, badges, facts, proscons, ranked, meter, quote } = INSIGHT_MODULE_JSON_SCHEMAS;
+  if (kind === "weather" || weatherBackedComparison) return [callout, badges];
+  if (kind === "comparison") return [facts, callout, proscons, ranked, meter, badges];
+  return [facts, callout, proscons, ranked, meter, quote, badges];
+}
+
+function withExtendedChartVariants(schema: JsonSchema): JsonSchema {
+  if (!schemaRecord(schema.properties) || firstSchemaEnum(schema.properties.type) !== "chart") {
+    return schema;
+  }
+  const weatherBacked = "locationIndexes" in schema.properties;
+  return {
+    ...schema,
+    properties: {
+      ...schema.properties,
+      variant: enumSchema(weatherBacked ? WEATHER_CHART_VARIANTS : CHART_VARIANTS),
+    },
+  };
+}
 
 function generativeModuleSchemas(
   kind: PlanKind,
   weatherBackedComparison: boolean,
   contract: ResolvedPlanContract,
   constraints: SurfacePlanSchemaConstraints,
+  toolkit: GrammarToolkit,
 ): JsonSchema {
   let schemas = weatherBackedComparison
     ? [...WEATHER_COMPARISON_PLAN_MODULE_SCHEMAS]
@@ -1814,6 +2044,17 @@ function generativeModuleSchemas(
         : schema;
     });
   }
+  if (toolkit === "extended" && !constraints.researchChangeManifest) {
+    const sourceSchema = schemas.filter(
+      (schema) => schemaRecord(schema.properties) && firstSchemaEnum(schema.properties.type) === "sources",
+    );
+    const contentSchemas = schemas.filter((schema) => !sourceSchema.includes(schema));
+    schemas = [
+      ...contentSchemas.map(withExtendedChartVariants),
+      ...extendedInsightSchemas(kind, weatherBackedComparison),
+      ...sourceSchema,
+    ];
+  }
   const constrained = constrainSurfacePlanSchema(
     strictObject({ module: { anyOf: schemas } }, ["module"]),
     constraints,
@@ -1822,17 +2063,19 @@ function generativeModuleSchemas(
   return schemaRecord(properties.module) ? properties.module : { anyOf: schemas };
 }
 
-function generativeSurfacePlanResponseSchema(
+export function generativeSurfacePlanResponseSchema(
   kind: PlanKind,
   weatherBackedComparison: boolean,
   contract: ResolvedPlanContract,
   constraints: SurfacePlanSchemaConstraints,
+  toolkit: GrammarToolkit = "base",
 ): JsonSchema {
   const moduleSchema = generativeModuleSchemas(
     kind,
     weatherBackedComparison,
     contract,
     constraints,
+    toolkit,
   );
   return strictObject(
     {
@@ -1862,7 +2105,7 @@ function generativeSurfacePlanResponseSchema(
             type: "array",
             minItems: 1,
             maxItems: 8,
-            items: { anyOf: [...GRAMMAR_LAYOUT_NODE_SCHEMAS] },
+            items: { anyOf: [...grammarLayoutNodeSchemas(toolkit)] },
           },
         },
         ["rootId", "nodes"],
@@ -2245,6 +2488,17 @@ function omitNullProperty(
   return copy;
 }
 
+/** Removes null and empty-string optional values from insight modules. */
+function stripOptionalNulls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripOptionalNulls);
+  if (!schemaRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, item]) => item !== null && item !== "")
+      .map(([key, item]) => [key, stripOptionalNulls(item)]),
+  );
+}
+
 function normalizeOptionalSurfacePlanNulls(input: unknown): unknown {
   if (!schemaRecord(input) || !Array.isArray(input.modules)) return input;
   const modules = input.modules as readonly unknown[];
@@ -2270,6 +2524,8 @@ function normalizeOptionalSurfacePlanNulls(input: unknown): unknown {
         module = omitNullProperty(module, "metric");
       } else if (module.type === "chart") {
         module = omitNullProperty(module, "unit");
+      } else if (typeof module.type === "string" && module.type in INSIGHT_MODULE_JSON_SCHEMAS) {
+        module = stripOptionalNulls(module) as Record<string, unknown>;
       }
       return module;
     }),
@@ -2742,11 +2998,39 @@ type GenerativeValidationSuccess = {
   plan: GenerativeSurfacePlan;
 };
 
+const OPTIONAL_LAYOUT_PROPERTIES = [
+  "label",
+  "width",
+  "icon",
+  "variant",
+  "style",
+  "defaultOpenIndex",
+] as const;
+
+function normalizeOptionalLayoutNulls(layout: unknown): unknown {
+  if (!schemaRecord(layout) || !Array.isArray(layout.nodes)) return layout;
+  const nodes: unknown[] = layout.nodes;
+  return {
+    ...layout,
+    nodes: nodes.map((node) => {
+      if (!schemaRecord(node)) return node;
+      let normalized = node;
+      for (const key of OPTIONAL_LAYOUT_PROPERTIES) {
+        if (normalized[key] === null || normalized[key] === "") {
+          normalized = omitNullProperty({ ...normalized, [key]: null }, key);
+        }
+      }
+      return normalized;
+    }),
+  };
+}
+
 function normalizeOptionalGenerativePlanNulls(input: unknown): unknown {
   if (!schemaRecord(input) || !Array.isArray(input.content)) return input;
   const content: unknown[] = input.content;
   return {
     ...input,
+    layout: normalizeOptionalLayoutNulls(input.layout),
     content: content.map((candidate: unknown) => {
       if (!schemaRecord(candidate) || !schemaRecord(candidate.module)) return candidate;
       const normalized = normalizeOptionalSurfacePlanNulls({ modules: [candidate.module] });
@@ -2873,7 +3157,8 @@ function generativeSurfaceInstruction(
   kind: PlanKind,
   contract: ResolvedPlanContract,
   weatherBackedComparison: boolean,
-  researchChangeManifest?: ResearchChangeManifest,
+  researchChangeManifest: ResearchChangeManifest | undefined,
+  toolkit: GrammarToolkit,
 ): string {
   return [
     "You compose a GenerativeSurfacePlan v3 for a trusted server-owned UI compiler.",
@@ -2881,9 +3166,13 @@ function generativeSurfaceInstruction(
     "Recipes are not templates or ordering rules. archetypeHint is optional metadata only; choose a coherent graph for the request.",
     "The content array contains trusted domain modules. Give each content node a unique ID. Use server-issued weather indexes and source IDs unchanged; never copy or invent measurements or URLs.",
     "The layout is one acyclic tree. Its children reference content IDs or layout-node IDs. Place every non-source content ID exactly once, keep source content out of the layout, and make every layout node reachable from rootId.",
-    `Put exactly one ${PLAN_PRIMARY_BY_KIND[kind]} content node first in depth-first logical reading order. Never place primary content or alerts inside tabs or disclosures, and never nest tabs or disclosures.`,
-    "Use only these layout types: stack, grid, split, section, card, rail, tabs, disclosure, divider. Use only their semantic enum properties; never emit CSS, class names, raw sizes, colors, HTML, JavaScript, or actions.",
-    "Use tabs or disclosures only when they make supporting material easier to scan. Prefer a stable answer-first hierarchy over novelty.",
+    ...(toolkit === "extended"
+      ? extendedToolkitInstructions(kind, weatherBackedComparison, PLAN_PRIMARY_BY_KIND[kind])
+      : [
+          `Put exactly one ${PLAN_PRIMARY_BY_KIND[kind]} content node first in depth-first logical reading order. Never place primary content or alerts inside tabs or disclosures, and never nest tabs or disclosures.`,
+          "Use only these layout types: stack, grid, split, section, card, rail, tabs, disclosure, divider. Use only their semantic enum properties; never emit CSS, class names, raw sizes, colors, HTML, JavaScript, or actions.",
+          "Use tabs or disclosures only when they make supporting material easier to scan. Prefer a stable answer-first hierarchy over novelty.",
+        ]),
     `Separate budgets: brief <= ${GENERATIVE_SURFACE_BUDGETS.brief.maxContentNodes} content and ${GENERATIVE_SURFACE_BUDGETS.brief.maxLayoutNodes} layout nodes; balanced <= ${GENERATIVE_SURFACE_BUDGETS.balanced.maxContentNodes} content and ${GENERATIVE_SURFACE_BUDGETS.balanced.maxLayoutNodes} layout nodes; detailed <= ${GENERATIVE_SURFACE_BUDGETS.detailed.maxContentNodes} content and ${GENERATIVE_SURFACE_BUDGETS.detailed.maxLayoutNodes} layout nodes.`,
     surfaceContentBudgetInstruction(),
     "Preserve every requested location, unit, hour, day, range, comparison criterion, evidence side, and cited source. Include exactly one sources module covering every cited source ID.",
@@ -2901,6 +3190,30 @@ function generativeSurfaceInstruction(
       : []),
     "Return one complete object matching the supplied JSON Schema.",
   ].join(" ");
+}
+
+function extendedToolkitInstructions(
+  kind: PlanKind,
+  weatherBackedComparison: boolean,
+  primaryType: string,
+): string[] {
+  const authoredModules =
+    kind === "weather"
+      ? "callout (info/positive/caution note) and badges (short tags)"
+      : weatherBackedComparison
+        ? "callout and badges"
+        : kind === "comparison"
+          ? "facts (2-6 key figures with optional trend and sparkline), callout, proscons, ranked, meter, and badges"
+          : "facts, callout, proscons, ranked, meter, quote (a short verbatim excerpt with its source), and badges";
+  return [
+    `Put exactly one ${primaryType} content node first in depth-first logical reading order. Never place primary content or alerts inside tabs, disclosures, or accordions, never nest those interactive containers, and keep primary content in the first (main) child of an aside.`,
+    "Layout types: stack, grid, split, section, card, rail, tabs, disclosure, divider, accordion, scroller, columns, aside. Use only their semantic enum properties; never emit CSS, class names, raw sizes, colors, HTML, JavaScript, or actions.",
+    "Layout guidance: accordion groups 2-5 labeled supporting panels; scroller is a labeled horizontal row of 2-8 peer items; columns sets one span per child (third, half, two-thirds, full); aside pairs main content with a supporting column on the start or end side.",
+    "Style tokens: tone neutral|accent|caution|positive|info; card variant outlined|filled|elevated with an optional icon and label; section width full|narrow with an optional icon; divider style line|space|ornament. Icons: spark, check, alert, info, clock, trend-up, trend-down, pin, star, scale, book, sun. Choose tokens that reinforce meaning, not decoration.",
+    `Optional supporting modules for this surface: ${authoredModules}. Every authored figure, point, or quote must come from the evidence and cite issued source IDs. Never invent numbers.`,
+    "Charts may use variant line, bar, area, stacked-bar (two or more non-negative series), donut (one non-negative series, at most eight slices), or range (exactly two series: low then high). Pick the variant that fits the data's shape.",
+    "Use interactive containers only when they make supporting material easier to scan. Prefer a stable answer-first hierarchy over novelty.",
+  ];
 }
 
 function initialGenerativeCompositionInput(payload: Record<string, unknown>): string {
@@ -2949,6 +3262,7 @@ export async function composeGenerativeSurfacePlan({
   clientContext,
   retrieval,
   signal,
+  toolkit = "base",
 }: ComposeSurfaceSpecInput): Promise<GenerativeSurfacePlanCompositionResult> {
   const kind = planKindFor(prompt, retrieval);
   const weatherBackedComparison = kind === "comparison" && retrieval.evidence.length > 0;
@@ -2994,12 +3308,19 @@ export async function composeGenerativeSurfacePlan({
           contract,
           weatherBackedComparison,
           researchChangeManifest,
+          toolkit,
         ),
-        schema: generativeSurfacePlanResponseSchema(kind, weatherBackedComparison, contract, {
-          sourceIds: retrieval.sources.map((source) => source.id),
-          weatherManifest: projection.weatherManifest,
-          researchChangeManifest,
-        }),
+        schema: generativeSurfacePlanResponseSchema(
+          kind,
+          weatherBackedComparison,
+          contract,
+          {
+            sourceIds: retrieval.sources.map((source) => source.id),
+            weatherManifest: projection.weatherManifest,
+            researchChangeManifest,
+          },
+          toolkit,
+        ),
         functionName: "emit_generative_surface_plan",
         signal,
       });

@@ -575,6 +575,7 @@ export default async function handler(request: ServerRequest, response: ServerRe
             clientContext: agentRequest.client,
             retrieval,
             signal: controller.signal,
+            toolkit: config.surfaceGrammarV3Toolkit,
           }),
           controller.signal,
         );

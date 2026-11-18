@@ -35,7 +35,7 @@ export const SURFACE_ICONS = [
 
 export const CHART_VARIANTS = ["line", "bar", "area", "stacked-bar", "donut", "range"] as const;
 /** Weather-backed charts are server-built from evidence indexes. */
-export const WEATHER_CHART_VARIANTS = ["line", "bar", "area", "range"] as const;
+export const WEATHER_CHART_VARIANTS = ["line", "bar", "area"] as const;
 
 export type SurfaceTone = (typeof SURFACE_TONES)[number];
 export type SurfaceIcon = (typeof SURFACE_ICONS)[number];

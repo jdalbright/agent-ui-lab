@@ -98,6 +98,10 @@ const LAYOUT_COMPONENTS = new Set([
   "Tabs",
   "Disclosure",
   "Divider",
+  "Accordion",
+  "Scroller",
+  "Columns",
+  "Aside",
 ]);
 
 const PRIMARY_COMPONENTS = new Set([
